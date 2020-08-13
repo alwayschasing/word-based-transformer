@@ -7,3 +7,4 @@ from .modeling import reshape_to_matrix
 from .modeling import reshape_from_matrix
 from .modeling import create_attention_mask_from_input_mask
 from .modeling import dropout
+from .modeling import get_activation

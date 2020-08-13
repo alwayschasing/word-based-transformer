@@ -2,30 +2,30 @@ import logging
 import tensorflow as tf
 import os
 import math
+import numpy as np
+import collections
 from .models import BertModel
 from .models.bert_transformer import get_shape_list
 from .models.bert_transformer import create_initializer
 from .models.bert_transformer import create_attention_mask_from_input_mask
 from .models.bert_transformer import optimization
 from .models.bert_transformer import get_assignment_map_from_checkpoint
+from .models.bert_transformer import get_activation
 from .models.bert_transformer import BertConfig
 from .data_struct import SenpairProcessor
 from .input_function import file_based_convert_examples_to_features
 from .input_function import file_based_input_fn_builder
+from .config import BaseConfig
 from . import tokenization
 
 
 flags = tf.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string(
-    "config_file", None,
-    "config_file path"
-)
-
-flags.DEFINE_string(
-    "",
-)
+flags.DEFINE_string("config_file", None, "config_file path")
+flags.DEFINE_string("output_dir", None, "output_dir path")
+flags.DEFINE_string("vocab_file", None, "vocab_file path")
+flags.DEFINE_string("gpu_id", "0", "gpu_id str")
 
 def word_attention_layer(input_tensor,
                          input_mask,
@@ -106,9 +106,9 @@ def word_attention_layer(input_tensor,
     return pooling_output, attention_probs
 
 
-def create_kwextraction_model(input_ids,
+def create_kwextraction_model(config,
+                              input_ids,
                               input_mask,
-                              config=None,
                               is_training=None,
                               embedding_table=None,
                               hidden_size=None,
@@ -170,22 +170,25 @@ def model_fn_builder(config,
         else:
             scaffold = None
 
+        is_training = (mode == tf.estimator.ModeKeys.TRAIN)
         sen_a_output, sen_a_attention_probs = create_kwextraction_model(input_ids=input_ids_a,
                                                                         input_mask=input_mask_a,
-                                                                        config=None,
-                                                                        is_training=None,
-                                                                        embedding_table=None,
-                                                                        hidden_size=None,
-                                                                        query_act=None)
+                                                                        config=config,
+                                                                        is_training=is_training,
+                                                                        embedding_table=embedding_table,
+                                                                        hidden_size=config.hidden_size,
+                                                                        query_act=get_activation(config.query_act),
+                                                                        key_act=None)
 
         if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
             sen_b_output, sen_b_attention_probs = create_kwextraction_model(input_ids=input_ids_b,
                                                                             input_mask=input_mask_b,
-                                                                            config=None,
-                                                                            is_training=None,
-                                                                            embedding_table=None,
-                                                                            hidden_size=None,
-                                                                            query_act=None)
+                                                                            config=config,
+                                                                            is_training=is_training,
+                                                                            embedding_table=embedding_table,
+                                                                            hidden_size=config.hidden_size,
+                                                                            query_act=get_activation(config.query_act),
+                                                                            key_act=None)
 
             total_loss = None
             with tf.variable_scope("sen_pair_loss"):
@@ -242,6 +245,7 @@ def model_fn_builder(config,
         else:
             output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                      predictions={"sen_embedding": sen_a_output,
+                                                                  "input_ids": input_ids_a,
                                                                   "word_attention_probs": sen_a_attention_probs})
         return output_spec
     return model_fn
@@ -249,12 +253,13 @@ def model_fn_builder(config,
 
 def main(_):
     tf.logging.set_verbosity(tf.logging.INFO)
+    os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id
     processor = SenpairProcessor()
 
     if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:
         raise ValueError("At least one of `do_train`, `do_eval` or `do_predict' must be True.")
 
-    config = BertConfig.from_json_file(FLAGS.config_file)
+    config = BaseConfig.from_json_file(FLAGS.config_file)
     tf.gfile.MakeDirs(FLAGS.output_dir)
 
     tokenizer = tokenization.Tokenizer(vocab_file=FLAGS.vocab_file, stop_words_file=FLAGS.stop_words_file, use_pos=False)
@@ -305,11 +310,90 @@ def main(_):
 
         estimator.train(input_fn=train_input_fn,
                         max_steps=num_train_steps)
-
     elif FLAGS.do_eval:
-        pass
-    else:
-        pass
+        dev_examples = processor.get_train_examples(FLAGS.data_dir)
+        dev_file = os.path.join(FLAGS.output_dir, "dev.tf_record")
+        if not os.path.exists(dev_file):
+            file_based_convert_examples_to_features(
+                dev_examples, FLAGS.max_seq_length, tokenizer, dev_file)
+        del dev_examples
+        tf.logging.info("***** Running evaluation *****")
+        tf.logging.info("  Num examples = %d", len(dev_examples))
+        tf.logging.info("  Batch size = %d", FLAGS.eval_batch_size)
 
+        eval_input_fn = file_based_input_fn_builder(
+            input_file=dev_file,
+            seq_length=FLAGS.max_seq_length,
+            is_training=False
+        )
+
+        if FLAGS.eval_model is not None:
+            eval_model_path = os.path.join(FLAGS.output_dir,FLAGS.eval_model)
+        else:
+            eval_model_path = None
+
+        result = estimator.evaluate(
+            input_fn=eval_input_fn,
+            checkpoint_path=eval_model_path
+        )
+        eval_output_file = os.path.join(FLAGS.output_dir, "eval_results.txt")
+        with tf.gfile.GFile(eval_output_file, "w") as writer:
+            tf.logging.info("***** Eval results *****")
+            for key in sorted(result.keys()):
+                tf.logging.info("  %s = %s", key, str(result[key]))
+                writer.write("%s = %s\n" % (key, str(result[key])))
+    else:
+        predict_examples = processor.get_test_examples()
+        predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
+        file_based_convert_examples_to_features(predict_examples, FLAGS.max_seq_length, tokenizer, predict_file,
+                                                set_type="test", label_type="int", single_text=True)
+
+        tf.logging.info("***** Running prediction*****")
+        tf.logging.info("  Num examples = %d", len(predict_examples))
+        tf.logging.info("  Batch size = %d", FLAGS.predict_batch_size)
+        predict_input_fn = file_based_input_fn_builder(
+            input_file=predict_file,
+            seq_length=FLAGS.max_seq_length,
+            is_training=False,
+            single_text=True
+        )
+
+        if FLAGS.pred_model is not None:
+            pred_model_path = os.path.join(FLAGS.output_dir, FLAGS.pred_model)
+        else:
+            pred_model_path = None
+
+        result = estimator.predict(
+            input_fn=predict_input_fn,
+            checkpoint_path=pred_model_path
+        )
+
+        output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
+        with tf.gfile.GFile(output_predict_file, "w") as writer:
+            tf.logging.info("***** Predict results *****")
+            for (i, prediction) in enumerate(result):
+                sen_embedding = prediction["sen_embedding"]
+                input_ids = prediction["input_ids"]
+                word_attention_probs = prediction["word_attention_probs"]
+                sorted_keyword_idx = np.argsort(-word_attention_probs, axis=-1)
+
+                extracted_keywords = collections.OrderedDict()
+                for idx in sorted_keyword_idx:
+                    word_id = input_ids[idx]
+                    word_prob = word_attention_probs[idx]
+                    word = tokenizer.convert_ids_to_tokens([word_id])[0]
+                    extracted_keywords[word] = word_prob
+
+                keyword_output = " ".join(["%s:%f" % (kw, prob) for kw, prob in extracted_keywords.items()])
+                text_output = " ".join(tokenizer.convert_ids_to_tokens[input_ids])
+                writer.write("%s\t%s" % (keyword_output, text_output))
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="[%(asctime)s-%(levelname)s] %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S")
+    flags.mark_flag_as_required("config_file")
+    flags.mark_flag_as_required("output_dir")
+    flags.mark_flag_as_required("vocab_file")
+    tf.app.run()
 
 

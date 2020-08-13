@@ -185,9 +185,9 @@ class BertModel(object):
                 # normalize and perform dropout.
                 self.embedding_output = embedding_postprocessor(
                     input_tensor=self.embedding_output,
-                    use_token_type=True,
+                    use_token_type=False,
                     token_type_ids=token_type_ids,
-                    token_type_vocab_size=config.type_vocab_size,
+                    token_type_vocab_size=16,
                     token_type_embedding_name="token_type_embeddings",
                     use_position_embeddings=True,
                     position_embedding_name="position_embeddings",
