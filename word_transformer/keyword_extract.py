@@ -26,6 +26,21 @@ flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
 flags.DEFINE_string("vocab_file", None, "vocab_file path")
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
+flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
+flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
+flags.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
+flags.DEFINE_integer("eval_batch_size", 32, "Total batch size for eval.")
+flags.DEFINE_integer("predict_batch_size", 32, "Total batch size for predict.")
+
+flags.DEFINE_bool("do_train", False, "Whether to run training.")
+flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
+flags.DEFINE_bool("do_predict", False, "Whether to run predict on the test set.")
+
+flags.DEFINE_string("init_checkpoint", None, "Initial checkpoint")
+flags.DEFINE_string("pred_model",None,"")
+flags.DEFINE_string("eval_model",None,"")
+flags.DEFINE_integer("save_checkpoints_steps", 1000,"")
+
 
 def word_attention_layer(input_tensor,
                          input_mask,
