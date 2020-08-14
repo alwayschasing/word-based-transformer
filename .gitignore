@@ -3,4 +3,5 @@
 /.vscode
 *.pyc
 /__pycache__
-/model_output
+model_output/*
+cached_data/*

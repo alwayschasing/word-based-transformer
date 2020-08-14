@@ -44,6 +44,9 @@ flags.DEFINE_string("pred_model",None,"")
 flags.DEFINE_string("eval_model",None,"")
 flags.DEFINE_integer("save_checkpoints_steps", 1000,"")
 
+flags.DEFINE_integer("num_train_epochs", 10, "num_train_steps")
+flags.DEFINE_integer("num_warmup_steps", 10, "num_warmup_steps")
+
 
 def word_attention_layer(input_tensor,
                          input_mask,
@@ -309,7 +312,7 @@ def main(_):
 
     run_config = None
     if FLAGS.do_train:
-        train_examples = processor.get_train_examples(FLAGS.data_dir)
+        train_examples = processor.get_train_examples(FLAGS.input_file)
         num_train_steps = int(
             len(train_examples) / FLAGS.batch_size * FLAGS.num_train_epochs)
         num_warmup_steps = FLAGS.num_warmup_steps
@@ -338,7 +341,10 @@ def main(_):
 
 
     if FLAGS.do_train:
-        train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
+        if FLAGS.cached_tfrecord:
+            train_file = FLAGS.cached_tfrecord
+        else:
+            train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         if not os.path.exists(train_file):
             file_based_convert_examples_to_features(
                 train_examples, FLAGS.max_seq_length, tokenizer, train_file)
@@ -356,8 +362,11 @@ def main(_):
         estimator.train(input_fn=train_input_fn,
                         max_steps=num_train_steps)
     elif FLAGS.do_eval:
-        dev_examples = processor.get_train_examples(FLAGS.data_dir)
-        dev_file = os.path.join(FLAGS.output_dir, "dev.tf_record")
+        dev_examples = processor.get_train_examples(FLAGS.input_file)
+        if FLAGS.cached_tfrecord:
+            dev_file = FLAGS.cached_tfrecord
+        else:
+            dev_file = os.path.join(FLAGS.output_dir, "dev.tf_record")
         if not os.path.exists(dev_file):
             file_based_convert_examples_to_features(
                 dev_examples, FLAGS.max_seq_length, tokenizer, dev_file)
