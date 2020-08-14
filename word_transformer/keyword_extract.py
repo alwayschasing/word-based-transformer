@@ -25,14 +25,11 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
 flags.DEFINE_string("vocab_file", None, "vocab_file path")
-<<<<<<< HEAD
 flags.DEFINE_string("stop_words_file", None, "stop_words_file path")
 flags.DEFINE_string("embedding_table", None, "embedding_table path")
 flags.DEFINE_bool("embedding_table_trainable", True, "embedding_table_trainable")
 flags.DEFINE_string("input_file", None, "input_file path")
 flags.DEFINE_string("cached_tfrecord", None, "cached tfrecord file path")
-=======
->>>>>>> parent of 53115a1... commit change
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
@@ -314,13 +311,8 @@ def main(_):
     if FLAGS.do_train:
         train_examples = processor.get_train_examples(FLAGS.data_dir)
         num_train_steps = int(
-<<<<<<< HEAD
             len(train_examples) / FLAGS.batch_size * FLAGS.num_train_epochs)
         num_warmup_steps = FLAGS.num_warmup_steps
-=======
-            len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
-        num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
->>>>>>> parent of 53115a1... commit change
 
         run_config = tf.estimator.RunConfig(
             save_summary_steps=100,
