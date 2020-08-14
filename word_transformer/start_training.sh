@@ -23,4 +23,4 @@ python keyword_extract.py \
     --do_train=True \
     --batch_size=64 \
     --num_warmup_steps=1000 \
-    --num_train_epochs=3
+    --num_train_epochs=8
