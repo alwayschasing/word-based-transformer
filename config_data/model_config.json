@@ -7,16 +7,12 @@
   "intermediate_size": 512, 
   "num_attention_heads": 4, 
   "num_hidden_layers": 2, 
-  "pooler_fc_size": 512, 
-  "pooler_num_attention_heads": 4, 
-  "pooler_num_fc_layers": 2, 
-  "pooler_size_per_head": , 
-  "pooler_type": "first_token_transform", 
   "use_token_type":0,
   "use_position_embeddings":1,
   "type_vocab_size": 2, 
-  "max_seq_length": 256
+  "max_seq_length": 256,
   "max_position_embeddings": 256, 
-  "vocab_size": 2000000,
-  "vocab_vec_size": 128,
+  "vocab_size": 780054,
+  "embedding_size": 256,
+  "query_act":"tanh"
 }

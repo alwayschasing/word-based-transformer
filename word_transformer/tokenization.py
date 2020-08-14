@@ -121,7 +121,10 @@ class Tokenizer(object):
         assert len(words) == len(pos_list)
         useful_words, useful_pos = self.filter_stop_words(words, pos_list)
         assert len(useful_words) == len(useful_pos)
-        return useful_words, useful_pos
+        if self.use_pos == False:
+            return useful_words
+        else:
+            return useful_words, useful_pos
 
     def filter_stop_words(self,words_list, pos_list):
         useful_words = []
@@ -140,8 +143,13 @@ class Tokenizer(object):
         for idx,item in enumerate(tokens):
             if item in self.vocab:
                 output.append(self.vocab[item])
-                pos_mask.append(pos[idx])
-        return output, pos_mask
+                if self.use_pos == True:
+                    pos_mask.append(pos[idx])
+
+        if self.use_pos == False:
+            return output
+        else:
+            return output, pos_mask
 
     def convert_ids_to_tokens(self, ids):
         return convert_by_vocab(self.inv_vocab, ids)

@@ -1,7 +1,7 @@
 import pickle
 import tensorflow as tf
 import logging
-from .models.bert_transformer import tokenization
+from models.bert_transformer import tokenization
 
 class InputExample(object):
     def __init__(self, guid, text_a, text_b=None, label=None):
@@ -40,23 +40,22 @@ class SenpairProcessor(DataProcessor):
     def __init__(self):
         pass
 
-    def _create_example(self, lines, set_type):
+    def _create_examples(self, lines, set_type):
         examples = []
         for (i, line) in enumerate(lines):
-            if i == 0:
-                continue
-            guid = ""
+            guid = "%d" % (i)
             text_a = tokenization.convert_to_unicode(line[0])
-            text_b = tokenization.convert_to_unicode(line[1])
+            text_b = None
             if set_type == "test":
                 label = 1
             else:
                 if len(line) < 3:
                     logging.error("[data error] line %d, %s" % (i, line))
                     raise ValueError("data format error, parts less 3")
+                text_b = tokenization.convert_to_unicode(line[1])
                 label = tokenization.convert_to_unicode(line[2])
             examples.append(
-                InputExample(guid=guid, text_a=text_a, label=label))
+                InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples
 
     def get_train_examples(self, data_path):

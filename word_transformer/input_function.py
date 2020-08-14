@@ -1,6 +1,7 @@
 import tensorflow as tf
 import collections
 import tokenization
+from data_struct import InputFeatures
 
 
 def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type="train"):
@@ -15,10 +16,19 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
     input_ids_a = tokenizer.convert_tokens_to_ids(tokens_a)
     input_mask_a = [1] * len(input_ids_a)
 
-    if tokens_b is not None and len(tokens_b) > max_seq_length:
-        tokens_b = tokens_b[0:max_seq_length]
+    while len(input_ids_a) < max_seq_length:
+        input_ids_a.append(0)
+        input_mask_a.append(0)
+
+    if tokens_b is not None:
+        if len(tokens_b) > max_seq_length:
+            tokens_b = tokens_b[0:max_seq_length]
+
         input_ids_b = tokenizer.convert_tokens_to_ids(tokens_b)
         input_mask_b = [1] * len(input_ids_b)
+        while len(input_ids_b) < max_seq_length:
+            input_ids_b.append(0)
+            input_mask_b.append(0)
 
     if ex_index < 5:
         tf.logging.info("*** Example ***")
@@ -31,7 +41,22 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
             tf.logging.info("input_ids_b: %s" % " ".join([str(x) for x in input_ids_b]))
             tf.logging.info("input_mask_b: %s" % " ".join([str(x) for x in input_mask_b]))
         tf.logging.info("label: %s" % (str(example.label)))
-
+    
+    if tokens_b is not None:
+        feature = InputFeatures(
+            input_ids_a=input_ids_a,
+            input_mask_a=input_mask_a,
+            input_ids_b=input_ids_b,
+            input_mask_b=input_mask_b,
+            label=example.label
+        ) 
+    else:
+        feature = InputFeatures(
+            input_ids_a=input_ids_a,
+            input_mask_a=input_mask_a,
+            label=example.label
+        )
+    return feature
 
 def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer, output_file, set_type="train", label_type="int", single_text=False):
     writer = tf.python_io.TFRecordWriter(output_file)
@@ -63,9 +88,9 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
             features["input_mask_b"] = create_int_feature(feature.input_mask_b)
 
         if label_type == "int":
-            features["labels"] = create_int_feature([feature.label])
+            features["labels"] = create_int_feature([int(feature.label)])
         else:
-            features["labels"] = create_float_feature([feature.label])
+            features["labels"] = create_float_feature([float(feature.label)])
 
         tf_example = tf.train.Example(features=tf.train.Features(feature=features))
         writer.write(tf_example.SerializeToString())
@@ -101,7 +126,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training, single_text
             d = d.shuffle(buffer_size=100)
 
         d = d.map(lambda record: _decode_record(record, name_to_features))
-        d = d.batch_size(batch_size=batch_size, drop_remainder=False)
+        d = d.batch(batch_size=batch_size, drop_remainder=False)
         return d
     return input_fn
 

@@ -10,8 +10,8 @@ import tensorflow as tf
 
 class BaseConfig(object):
     def __init__(self,
-                 vocab_size,
-                 vocab_vec_size,
+                 vocab_size=0,
+                 embedding_size=0,
                  hidden_size=256,
                  num_hidden_layers=2,
                  num_attention_heads=4,
@@ -24,6 +24,7 @@ class BaseConfig(object):
                  query_act="tanh",
                  key_act="tanh"):
         self.vocab_size = vocab_size
+        self.embedding_size = embedding_size
         self.hidden_size = hidden_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
@@ -39,7 +40,7 @@ class BaseConfig(object):
     @classmethod
     def from_dict(cls, json_object):
         """Constructs a `BaseConfig` from a Python dictionary of parameters."""
-        config = BaseConfig(vocab_size=None)
+        config = BaseConfig()
         for (key, value) in six.iteritems(json_object):
             config.__dict__[key] = value
         return config

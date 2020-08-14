@@ -4,19 +4,19 @@ import os
 import math
 import numpy as np
 import collections
-from .models import BertModel
-from .models.bert_transformer import get_shape_list
-from .models.bert_transformer import create_initializer
-from .models.bert_transformer import create_attention_mask_from_input_mask
-from .models.bert_transformer import optimization
-from .models.bert_transformer import get_assignment_map_from_checkpoint
-from .models.bert_transformer import get_activation
-from .models.bert_transformer import BertConfig
-from .data_struct import SenpairProcessor
-from .input_function import file_based_convert_examples_to_features
-from .input_function import file_based_input_fn_builder
-from .config import BaseConfig
-from . import tokenization
+from models import BertModel
+from models.bert_transformer import get_shape_list
+from models.bert_transformer import create_initializer
+from models.bert_transformer import create_attention_mask_from_input_mask
+from models.bert_transformer import optimization
+from models.bert_transformer import get_assignment_map_from_checkpoint
+from models.bert_transformer import get_activation
+from models.bert_transformer import BertConfig
+from data_struct import SenpairProcessor
+from input_function import file_based_convert_examples_to_features
+from input_function import file_based_input_fn_builder
+from config import BaseConfig
+import tokenization
 
 
 flags = tf.flags
@@ -25,14 +25,15 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
 flags.DEFINE_string("vocab_file", None, "vocab_file path")
+flags.DEFINE_string("stop_words_file", None, "stop_words_file path")
+flags.DEFINE_string("embedding_table", None, "embedding_table path")
+flags.DEFINE_bool("embedding_table_trainable", True, "embedding_table_trainable")
 flags.DEFINE_string("input_file", None, "input_file path")
 flags.DEFINE_string("cached_tfrecord", None, "cached tfrecord file path")
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
-flags.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
-flags.DEFINE_integer("eval_batch_size", 32, "Total batch size for eval.")
-flags.DEFINE_integer("predict_batch_size", 32, "Total batch size for predict.")
+flags.DEFINE_integer("batch_size", 32, "Total batch size.")
 
 flags.DEFINE_bool("do_train", False, "Whether to run training.")
 flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
@@ -80,13 +81,13 @@ def word_attention_layer(input_tensor,
         kernel_initializer=create_initializer(initializer_range)
     )
 
-    key_layer = tf.layers.dense(
-        inputs=input_tensor,
-        units=hidden_size,
-        activation=key_act,
-        name="key",
-        kernel_initializer=create_initializer(initializer_range)
-    )
+    #key_layer = tf.layers.dense(
+    #    inputs=input_tensor,
+    #    units=hidden_size,
+    #    activation=key_act,
+    #    name="key",
+    #    kernel_initializer=create_initializer(initializer_range)
+    #)
 
     #value_layer = tf.layers.dense(
     #    inputs=input_tensor,
@@ -100,12 +101,22 @@ def word_attention_layer(input_tensor,
     query_shape_list = get_shape_list(query_layer, expected_rank=3)
     tf.logging.debug("query_layer shape: %s" % (str(query_shape_list)))
     # query shape [batch_size, seq_length, hidden_size]
-    attention_scores = tf.matmul(query_layer, key_layer, transpose_b=True)
-    attention_scores = tf.multiply(attention_scores, 1.0 / math.sqrt(float(hidden_size)))
+    #attention_scores = tf.matmul(query_layer, key_layer, transpose_b=True)
+    attention_scores = tf.layers.dense(
+        query_layer,
+        units=1,
+        activation=None,
+        name="attn_weights",
+        kernel_initializer=create_initializer(initializer_range)
+    )
+    weights = tf.get_variable(name="attn_weights", shape=[hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
+    attention_scores = tf.tensordot(query_layer, weights, axes=1)
+    # attention_scores = tf.multiply(attention_scores, 1.0 / math.sqrt(float(hidden_size)))
     # attention_mask shape: [batch_size, seq_length, seq_length]
-    attention_mask = create_attention_mask_from_input_mask(input_tensor, input_mask)
+    #attention_mask = create_attention_mask_from_input_mask(input_tensor, input_mask)
     # expand for multi heads, [batch_size, 1, seq_length, seq_length]
-    attention_mask = tf.expand_dims(attention_mask, axis=[1])
+    #attention_mask = tf.expand_dims(attention_mask, axis=[1])
+    attention_mask = input_mask
     mask_adder = (1.0 - tf.cast(attention_mask, tf.float32)) * -10000.0
     # attention_score: [batch_size, num_heads, seq_length, seq_length]
     attention_scores += mask_adder
@@ -115,16 +126,29 @@ def word_attention_layer(input_tensor,
     # value_layer = tf.reshape(value_layer, [batch_size, seq_length, hidden_size])
     # value_layer shape : [batch_size, num_heads, seq_length, size_per_head]
     # value_layer = tf.transpose(value_layer, [0, 2, 1, 3])
-    context_layer = tf.matmul(attention_probs, value_layer)
+    context_layer = tf.reduce_mean(tf.math.multiply(tf.reshape(attention_probs, [batch_size, seq_length, 1]), value_layer), axis=1)
     # context_layer shape : [batch_size, seq_length, hidden_size]
     # context_layer = tf.transpose(context_layer, [0, 2, 1, 3])
     # context_layer = tf.reshape(context_layer, [batch_size, seq_length, hidden_size])
 
     #if pooling_strategy == "mean":
     # input_mask_expanded = tf.cast(input_mask.expand(), float)
-    pooling_output = tf.reduce_sum(tf.matmul(context_layer, input_mask), axis=1)/tf.reduce_sum(input_mask, axis=1)
-    tf.logging.debug("pooling_output: %s"%(get_shape_list(pooling_output)))
-    return pooling_output, attention_probs
+    #float_mask = tf.cast(input_mask, tf.float32)
+    #float_mask = tf.reshape(float_mask, [batch_size, seq_length, 1])
+    #tf.logging.debug("context_layer shape:%s" % (get_shape_list(context_layer)))
+    #tf.logging.debug("float_mask shape:%s" % (get_shape_list(float_mask)))
+    #pooling_output = tf.math.multiply(context_layer, float_mask)
+    #tf.logging.debug("[check shape1 shape:%s" % (get_shape_list(pooling_output)))
+    #pooling_output = tf.reduce_sum(context_layer, axis=1)
+    #tf.logging.debug("[check shape2 shape:%s" % (get_shape_list(pooling_output)))
+    #divisor = tf.reduce_sum(float_mask, axis=1)
+    #tf.logging.debug("[check shape3 shape:%s" % (get_shape_list(divisor)))
+    #pooling_output = pooling_output/divisor
+    #tf.logging.debug("[check shape4 shape:%s" % (get_shape_list(pooling_output)))
+    #tf.logging.debug("[check attention_probs shape:%s" % (get_shape_list(attention_probs)))
+    tf.logging.debug("[check context_layer shape:%s" % (get_shape_list(context_layer)))
+    tf.logging.debug("[check attention_probs shape:%s" % (get_shape_list(attention_probs)))
+    return context_layer, attention_probs
 
 
 def create_kwextraction_model(config,
@@ -135,23 +159,23 @@ def create_kwextraction_model(config,
                               hidden_size=None,
                               query_act=None,
                               key_act=None):
+    with tf.variable_scope("kwextract", reuse=tf.compat.v1.AUTO_REUSE):
+        encode_model = BertModel(config=config,
+                                is_training=is_training,
+                                input_ids=input_ids,
+                                input_mask=input_mask,
+                                embedding_table=embedding_table,
+                                use_one_hot_embeddings=False)
 
-    encode_model = BertModel(config=config,
-                             is_training=is_training,
-                             input_ids=input_ids,
-                             input_mask=input_mask,
-                             embedding_table=embedding_table,
-                             use_one_hot_embeddings=False)
-
-    sequence_output = encode_model.get_sequence_output()
+        sequence_output = encode_model.get_sequence_output()
     # attention_probs : [batch_size, seq_length]
-    pooling_output, attention_probs = word_attention_layer(input_tensor=sequence_output,
-                                                           input_mask=input_mask,
-                                                           hidden_size=hidden_size,
-                                                           query_act=query_act,
-                                                           key_act=key_act)
+        pooling_output, attention_probs = word_attention_layer(input_tensor=sequence_output,
+                                                            input_mask=input_mask,
+                                                            hidden_size=hidden_size,
+                                                            query_act=query_act,
+                                                            key_act=key_act)
 
-    return pooling_output, attention_probs
+        return pooling_output, attention_probs
 
 
 def model_fn_builder(config,
@@ -180,7 +204,7 @@ def model_fn_builder(config,
             labels = features["labels"]
 
         embedding_table = tf.get_variable("embedding_table",
-                                          shape=[config.vocab_size, config.vocab_vec_size],
+                                          shape=[config.vocab_size, config.embedding_size],
                                           trainable=embedding_table_trainable)
 
         def init_embedding_table(scoffold, sess):
@@ -214,7 +238,7 @@ def model_fn_builder(config,
             total_loss = None
             with tf.variable_scope("sen_pair_loss"):
                 if task == "classify":
-                    with tf.variable("classify_loss"):
+                    with tf.variable_scope("classify_loss"):
                         concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
                         logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
                         probabilities = tf.nn.softmax(logits)
@@ -222,9 +246,10 @@ def model_fn_builder(config,
                                                                    logits=logits)
                         total_loss = softmax_loss
                 elif task == "regression":
-                    with tf.variabel("regression_loss"):
+                    with tf.variable_scope("regression_loss"):
                         cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
                         cosine_val = cosine_similarity(sen_a_output, sen_b_output)
+                        cosine_val = tf.reshape(cosine_val, [-1])
                         total_loss = tf.losses.mean_squared_error(labels, cosine_val)
                 else:
                     raise ValueError("task name error")
@@ -274,6 +299,7 @@ def model_fn_builder(config,
 
 def main(_):
     tf.logging.set_verbosity(tf.logging.INFO)
+    #tf.logging.set_verbosity(tf.logging.DEBUG)
     os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id
     processor = SenpairProcessor()
 
@@ -289,7 +315,7 @@ def main(_):
     if FLAGS.do_train:
         train_examples = processor.get_train_examples(FLAGS.input_file)
         num_train_steps = int(
-            len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
+            len(train_examples) / FLAGS.batch_size * FLAGS.num_train_epochs)
         num_warmup_steps = FLAGS.num_warmup_steps
 
         run_config = tf.estimator.RunConfig(
@@ -311,10 +337,12 @@ def main(_):
                                 embedding_table_value=embedding_table,
                                 embedding_table_trainable=FLAGS.embedding_table_trainable)
 
+
+    params = {"batch_size":FLAGS.batch_size}
     estimator = tf.estimator.Estimator(model_fn=model_fn,
                                        model_dir=FLAGS.output_dir,
                                        config=run_config,
-                                       params=None)
+                                       params=params)
 
 
     if FLAGS.do_train:
@@ -326,11 +354,11 @@ def main(_):
         if not os.path.exists(train_file):
             file_based_convert_examples_to_features(
                 train_examples, FLAGS.max_seq_length, tokenizer, train_file)
-        del train_examples  # 释放train_examples内存
         tf.logging.info("***** Running training *****")
         tf.logging.info("  Num examples = %d", len(train_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.train_batch_size)
+        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
         tf.logging.info("  Num steps = %d", num_train_steps)
+        del train_examples  # 释放train_examples内存
         train_input_fn = file_based_input_fn_builder(
             input_file=train_file,
             seq_length=FLAGS.max_seq_length,
@@ -348,11 +376,10 @@ def main(_):
         if not os.path.exists(dev_file):
             file_based_convert_examples_to_features(
                 dev_examples, FLAGS.max_seq_length, tokenizer, dev_file)
-        del dev_examples
         tf.logging.info("***** Running evaluation *****")
         tf.logging.info("  Num examples = %d", len(dev_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.eval_batch_size)
-
+        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
+        del dev_examples
         eval_input_fn = file_based_input_fn_builder(
             input_file=dev_file,
             seq_length=FLAGS.max_seq_length,
@@ -382,7 +409,7 @@ def main(_):
 
         tf.logging.info("***** Running prediction*****")
         tf.logging.info("  Num examples = %d", len(predict_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.predict_batch_size)
+        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
         predict_input_fn = file_based_input_fn_builder(
             input_file=predict_file,
             seq_length=FLAGS.max_seq_length,
@@ -421,8 +448,7 @@ def main(_):
                 writer.write("%s\t%s" % (keyword_output, text_output))
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="[%(asctime)s-%(levelname)s] %(message)s",
-                        datefmt="%Y-%m-%d %H:%M:%S")
+    #logging.basicConfig(level=logging.INFO, format="[%(asctime)s-%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     flags.mark_flag_as_required("config_file")
     flags.mark_flag_as_required("output_dir")
     flags.mark_flag_as_required("vocab_file")
