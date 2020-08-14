@@ -25,11 +25,14 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
 flags.DEFINE_string("vocab_file", None, "vocab_file path")
+<<<<<<< HEAD
 flags.DEFINE_string("stop_words_file", None, "stop_words_file path")
 flags.DEFINE_string("embedding_table", None, "embedding_table path")
 flags.DEFINE_bool("embedding_table_trainable", True, "embedding_table_trainable")
 flags.DEFINE_string("input_file", None, "input_file path")
 flags.DEFINE_string("cached_tfrecord", None, "cached tfrecord file path")
+=======
+>>>>>>> parent of 53115a1... commit change
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
@@ -43,10 +46,6 @@ flags.DEFINE_string("init_checkpoint", None, "Initial checkpoint")
 flags.DEFINE_string("pred_model",None,"")
 flags.DEFINE_string("eval_model",None,"")
 flags.DEFINE_integer("save_checkpoints_steps", 1000,"")
-
-flags.DEFINE_integer("num_warmup_steps", 10, "num_warmup_steps")
-flags.DEFINE_integer("num_train_epochs", 10, "num_train_steps")
-
 
 
 def word_attention_layer(input_tensor,
@@ -313,20 +312,21 @@ def main(_):
 
     run_config = None
     if FLAGS.do_train:
-        train_examples = processor.get_train_examples(FLAGS.input_file)
+        train_examples = processor.get_train_examples(FLAGS.data_dir)
         num_train_steps = int(
+<<<<<<< HEAD
             len(train_examples) / FLAGS.batch_size * FLAGS.num_train_epochs)
         num_warmup_steps = FLAGS.num_warmup_steps
+=======
+            len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
+        num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
+>>>>>>> parent of 53115a1... commit change
 
         run_config = tf.estimator.RunConfig(
             save_summary_steps=100,
             save_checkpoints_steps=num_train_steps/FLAGS.num_train_epochs,
             keep_checkpoint_max=5,
         )
-    
-    embedding_table = None
-    if FLAGS.embedding_table is not None:
-        embedding_table = load_embedding_table(FLAGS.embedding_table)
 
     model_fn = model_fn_builder(config=config,
                                 learning_rate=1e-5,
@@ -334,8 +334,8 @@ def main(_):
                                 num_train_steps=num_train_steps,
                                 num_warmup_steps=num_warmup_steps,
                                 init_checkpoint=FLAGS.init_checkpoint,
-                                embedding_table_value=embedding_table,
-                                embedding_table_trainable=FLAGS.embedding_table_trainable)
+                                embedding_table_value=None,
+                                embedding_table_trainable=False)
 
 
     params = {"batch_size":FLAGS.batch_size}
@@ -346,11 +346,7 @@ def main(_):
 
 
     if FLAGS.do_train:
-        # train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
-        if FLAGS.cached_tfrecord:
-            train_file = FLAGS.cached_tfrecord
-        else:
-            train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
+        train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         if not os.path.exists(train_file):
             file_based_convert_examples_to_features(
                 train_examples, FLAGS.max_seq_length, tokenizer, train_file)
@@ -368,11 +364,8 @@ def main(_):
         estimator.train(input_fn=train_input_fn,
                         max_steps=num_train_steps)
     elif FLAGS.do_eval:
-        dev_examples = processor.get_train_examples(FLAGS.input_file)
-        if FLAGS.cached_tfrecord:
-            dev_file = FLAGS.cached_tfrecord
-        else:
-            dev_file = os.path.join(FLAGS.output_dir, "dev.tf_record")
+        dev_examples = processor.get_train_examples(FLAGS.data_dir)
+        dev_file = os.path.join(FLAGS.output_dir, "dev.tf_record")
         if not os.path.exists(dev_file):
             file_based_convert_examples_to_features(
                 dev_examples, FLAGS.max_seq_length, tokenizer, dev_file)
@@ -402,7 +395,7 @@ def main(_):
                 tf.logging.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
     else:
-        predict_examples = processor.get_test_examples(FLAGS.input_file)
+        predict_examples = processor.get_test_examples()
         predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
         file_based_convert_examples_to_features(predict_examples, FLAGS.max_seq_length, tokenizer, predict_file,
                                                 set_type="test", label_type="int", single_text=True)
@@ -452,7 +445,6 @@ if __name__ == "__main__":
     flags.mark_flag_as_required("config_file")
     flags.mark_flag_as_required("output_dir")
     flags.mark_flag_as_required("vocab_file")
-    flags.mark_flag_as_required("input_file")
     tf.app.run()
 
 

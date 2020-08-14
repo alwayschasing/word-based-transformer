@@ -1,4 +1,6 @@
 /data
 *log*
 /.vscode
-model_output/*
+*.pyc
+/__pycache__
+/model_output
