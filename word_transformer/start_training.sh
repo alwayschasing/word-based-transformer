@@ -7,17 +7,20 @@ export CUDA_HOME=/usr/local/cuda-10.0:$CUDA_HOME
 config_file="/search/odin/liruihong/word-based-transformer/config_data/model_config.json"
 vocab_file="/search/odin/liruihong/word-based-transformer/config_data/final_vocab.txt"
 input_file="/search/odin/liruihong/word-based-transformer/data/train_data_1000k.tsv"
-cached_tfrecord="/search/odin/liruihong/word-based-transformer/cached_data/train_data_1000k.tfrecord"
-output_dir="/search/odin/liruihong/word-based-transformer/model_output/word-transformer"
+cached_train_data="/search/odin/liruihong/word-based-transformer/cached_data/train_data_1000k.tfrecord"
+cached_dev_data="/search/odin/liruihong/word-based-transformer/cached_data/dev_data_100k.tfrecord"
+output_dir="/search/odin/liruihong/word-based-transformer/model_output/pretrain_multihead_attn_sep_classify_ini0.1"
+embedding_table="/search/odin/liruihong/word-based-transformer/config_data/final_vocab_embedding.txt"
 
 python keyword_extract.py \
-    --gpu_id="2" \
+    --gpu_id="6" \
     --config_file=$config_file \
     --vocab_file=$vocab_file \
     --output_dir=$output_dir \
     --input_file=$input_file \
-    --cached_tfrecord=$cached_tfrecord \
-    --embedding_table_trainable=True \
+    --cached_tfrecord=$cached_dev_data \
+    --embedding_table=$embedding_table \
+    --embedding_table_trainable=False \
     --max_seq_length=256 \
     --save_checkpoint_steps=20000 \
     --do_train=True \
