@@ -21,6 +21,7 @@ class BaseConfig(object):
                  attention_probs_dropout_prob=0.1,
                  max_position_embeddings=256,
                  initializer_range=0.02,
+                 label_nums=2,
                  query_act="tanh",
                  key_act="tanh"):
         self.vocab_size = vocab_size
@@ -34,6 +35,7 @@ class BaseConfig(object):
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
+        self.label_nums = label_nums
         self.query_act = query_act
         self.key_act = key_act
 

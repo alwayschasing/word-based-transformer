@@ -10,6 +10,7 @@
   "use_token_type":0,
   "use_position_embeddings":1,
   "type_vocab_size": 2, 
+  "label_nums":2,
   "max_seq_length": 256,
   "max_position_embeddings": 256, 
   "vocab_size": 780054,

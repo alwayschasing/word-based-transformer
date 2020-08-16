@@ -34,6 +34,7 @@ flags.DEFINE_string("gpu_id", "0", "gpu_id str")
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
 flags.DEFINE_integer("batch_size", 32, "Total batch size.")
+flags.DEFINE_string("task_type", "classify", "task type name, classify or regression")
 
 flags.DEFINE_bool("do_train", False, "Whether to run training.")
 flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
@@ -158,31 +159,34 @@ def create_kwextraction_model(config,
                               hidden_size=None,
                               query_act=None,
                               key_act=None,
-                              scope="title_kw"):
+                              scope="title_kw",
+                              model_type="bert"):
     with tf.variable_scope(scope, reuse=tf.compat.v1.AUTO_REUSE):
-        encode_model = BertModel(config=config,
-                                is_training=is_training,
-                                input_ids=input_ids,
-                                input_mask=input_mask,
-                                embedding_table=embedding_table,
-                                use_one_hot_embeddings=False)
+        if model_type == "bert":
+            encode_model = BertModel(config=config,
+                                    is_training=is_training,
+                                    input_ids=input_ids,
+                                    input_mask=input_mask,
+                                    embedding_table=embedding_table,
+                                    use_one_hot_embeddings=False)
 
-        sequence_output = encode_model.get_sequence_output()
-    # attention_probs : [batch_size, seq_length]
-        pooling_output, attention_probs = word_attention_layer(input_tensor=sequence_output,
-                                                            input_mask=input_mask,
-                                                            hidden_size=hidden_size,
-                                                            query_act=query_act,
-                                                            key_act=key_act)
-
+            sequence_output = encode_model.get_sequence_output()
+            # attention_probs : [batch_size, seq_length]
+            pooling_output, attention_probs = word_attention_layer(input_tensor=sequence_output,
+                                                                input_mask=input_mask,
+                                                                hidden_size=hidden_size,
+                                                                query_act=query_act,
+                                                                key_act=key_act)
+        elif model_type == "bilstm":
+            pass
+        else:
+            raise ValueError("model type error")
         return pooling_output, attention_probs
 
 
 def model_fn_builder(config,
                      learning_rate=1e-5,
                      task="classify",
-                     num_train_steps=10,
-                     num_warmup_steps=1,
                      init_checkpoint=None,
                      embedding_table_value=None,
                      embedding_table_trainable=False,
@@ -244,7 +248,7 @@ def model_fn_builder(config,
                         logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
                         probabilities = tf.nn.softmax(logits)
                         labels = tf.cast(labels, tf.int32)
-                        softmax_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels),
+                        softmax_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
                                                                    logits=logits)
                         total_loss = softmax_loss
                 elif task == "regression":
@@ -283,10 +287,10 @@ def model_fn_builder(config,
                                                      scaffold=scaffold)
         elif mode == tf.estimator.ModeKeys.EVAL:
             if task == "classify":
-                predictions = tf.argmax(probabilities)
+                predictions = tf.argmax(probabilities, axis=1)
                 output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                         loss=total_loss,
-                                                        eval_metric_ops={"auc": tf.metrics.auc(labels, predictions)},
+                                                        eval_metric_ops={"accuracy": tf.metrics.accuracy(labels, predictions)},
                                                         scaffold=scaffold)
             elif task == "regression":
                 predictions = cosine_val
@@ -324,7 +328,7 @@ def load_embedding_table(embedding_file, vocab_file):
             word = parts[0]
             vec = parts[1:]
             vectors.append(vec)
-    
+
     embedding_table = np.asarray(vectors, dtype=np.float32)
     tf.logging.info("load embedding_table, shape is %s"%(str(embedding_table.shape)))
     assert len(vocab) == len(vectors)
@@ -364,9 +368,7 @@ def main(_):
 
     model_fn = model_fn_builder(config=config,
                                 learning_rate=1e-5,
-                                task="regression",
-                                num_train_steps=num_train_steps,
-                                num_warmup_steps=num_warmup_steps,
+                                task=FLAGS.task_type,
                                 init_checkpoint=FLAGS.init_checkpoint,
                                 embedding_table_value=None,
                                 embedding_table_trainable=False)
@@ -420,7 +422,7 @@ def main(_):
         )
 
         if FLAGS.eval_model is not None:
-            eval_model_path = os.path.join(FLAGS.output_dir,FLAGS.eval_model)
+            eval_model_path = os.path.join(FLAGS.output_dir, FLAGS.eval_model)
         else:
             eval_model_path = None
 

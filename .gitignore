@@ -2,7 +2,7 @@
 *log*
 /.vscode
 *.pyc
-/__pycache__
+*/__pycache__/*
 model_output/*
 cached_data/*
 *vocab_embedding*

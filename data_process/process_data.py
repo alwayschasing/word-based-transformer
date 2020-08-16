@@ -4,6 +4,8 @@ from tqdm import tqdm
 import jieba
 import random
 import csv
+import logging
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(messgae)s", datefmt="%Y-%m-%d_%H:%M:%S")
 
 
 def load_vocab_dict(vocab_file):
@@ -45,6 +47,7 @@ def generate_train_data_from_articles(cutword_file, vocab_file, train_file, dev_
         total_num = len(lines)
         for line in tqdm(lines):
             if idx < 1000000:
+                idx += 1
                 continue
             parts = line.strip().split('\t')
             if len(parts) < 2:
@@ -66,12 +69,14 @@ def generate_train_data_from_articles(cutword_file, vocab_file, train_file, dev_
             idx += 1
             if example_nums is not None and count >= example_nums:
                 break
-    
+
     random.shuffle(examples)
     total_num = len(examples)
+    logging.info("total_num: %d" % (total_num))
     dev_num = int(total_num * dev_ratio)
     dev_examples = examples[0:dev_num]
     train_examples = examples[dev_num:]
+    logging.info("train_num:%d, dev_num:%d" % (total_num-dev_num, dev_num))
     with open(train_file, "w", encoding="utf-8") as fp:
         writer = csv.writer(fp, delimiter='\t')
         for example in train_examples:
@@ -83,9 +88,9 @@ def generate_train_data_from_articles(cutword_file, vocab_file, train_file, dev_
 
 
 def preprocess_cutword_file():
-    ori_file = "/search/odin/liruihong/article_data/20200701_15"
+    ori_file = "/search/odin/liruihong/article_data/random_201906_14"
     vocab_file = "/search/odin/liruihong/word-based-transformer/config_data/final_vocab.txt"
-    output_file = "/search/odin/liruihong/word-based-transformer/data/cutword_article_20200701_15"
+    output_file = "/search/odin/liruihong/word-based-transformer/data/cutword_article_201906_14"
     generate_cutword_file(ori_file, output_file, vocab_file)
 
 
@@ -97,5 +102,5 @@ def run_train_data_generation():
     generate_train_data_from_articles(cutword_file, vocab_file, train_file, dev_file, example_nums=1000000, dev_ratio=0.1)
 
 if __name__ == "__main__":
-    run_train_data_generation()
-    #preprocess_cutword_file()
+    #run_train_data_generation()
+    preprocess_cutword_file()
