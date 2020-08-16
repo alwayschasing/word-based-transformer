@@ -3,6 +3,7 @@
 from tqdm import tqdm
 import jieba
 import random
+import csv
 
 
 def load_vocab_dict(vocab_file):
@@ -35,15 +36,16 @@ def generate_cutword_file(ori_file, output_file, vocab_file):
     wfp.close()
 
 
-def generate_train_data_from_articles(cutword_file, vocab_file, output_file, example_nums=None):
-    #jieba.enable_parallel(30)
-    #jieba.load_userdict(vocab_file)
-    wfp = open(output_file,"w", encoding="utf-8")
+def generate_train_data_from_articles(cutword_file, vocab_file, train_file, dev_file, example_nums=None, dev_ratio=0.1):
     count = 0
+    examples = []
+    idx = 0
     with open(cutword_file, "r", encoding="utf-8") as fp:
         lines = fp.readlines()
         total_num = len(lines)
         for line in tqdm(lines):
+            if idx < 1000000:
+                continue
             parts = line.strip().split('\t')
             if len(parts) < 2:
                 continue
@@ -56,14 +58,28 @@ def generate_train_data_from_articles(cutword_file, vocab_file, output_file, exa
             neg_title_words = neg_parts[0]
             neg_content_words = neg_parts[1]
 
-            wfp.write("%s\t%s\t%d\n" % (title_words, content_words, 1))
-            wfp.write("%s\t%s\t%d\n" % (title_words, neg_content_words, 0))
+            examples.append([title_words, content_words, 1])
+            examples.append([title_words, neg_content_words, 0])
+            #wfp.write("%s\t%s\t%d\n" % (title_words, content_words, 1))
+            #wfp.write("%s\t%s\t%d\n" % (title_words, neg_content_words, 0))
             count += 2
-            # wfp.write("%s\t%s\t%d\n% (neg_title_words, content_words, 0))
-
+            idx += 1
             if example_nums is not None and count >= example_nums:
                 break
-    wfp.close()
+    
+    random.shuffle(examples)
+    total_num = len(examples)
+    dev_num = int(total_num * dev_ratio)
+    dev_examples = examples[0:dev_num]
+    train_examples = examples[dev_num:]
+    with open(train_file, "w", encoding="utf-8") as fp:
+        writer = csv.writer(fp, delimiter='\t')
+        for example in train_examples:
+            writer.writerow(example)
+    with open(dev_file, "w", encoding="utf-8") as fp:
+        writer = csv.writer(fp, delimiter="\t")
+        for example in dev_examples:
+            writer.writerow(example)
 
 
 def preprocess_cutword_file():
@@ -76,8 +92,9 @@ def preprocess_cutword_file():
 def run_train_data_generation():
     cutword_file = "/search/odin/liruihong/word-based-transformer/data/cutword_article_20200701_15"
     vocab_file = "/search/odin/liruihong/word-based-transformer/config_data/final_vocab.txt"
-    output_file = "/search/odin/liruihong/word-based-transformer/data/train_data_1000k.tsv"
-    generate_train_data_from_articles(cutword_file, vocab_file, output_file, example_nums=1000000)
+    train_file = "/search/odin/liruihong/word-based-transformer/data/train_data_900k.tsv"
+    dev_file = "/search/odin/liruihong/word-based-transformer/data/dev_data_100k.tsv"
+    generate_train_data_from_articles(cutword_file, vocab_file, train_file, dev_file, example_nums=1000000, dev_ratio=0.1)
 
 if __name__ == "__main__":
     run_train_data_generation()

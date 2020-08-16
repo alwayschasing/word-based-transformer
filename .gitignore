@@ -5,3 +5,4 @@
 /__pycache__
 model_output/*
 cached_data/*
+*vocab_embedding*

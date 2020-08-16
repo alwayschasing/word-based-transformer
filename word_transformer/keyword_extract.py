@@ -157,8 +157,9 @@ def create_kwextraction_model(config,
                               embedding_table=None,
                               hidden_size=None,
                               query_act=None,
-                              key_act=None):
-    with tf.variable_scope("kwextract", reuse=tf.compat.v1.AUTO_REUSE):
+                              key_act=None,
+                              scope="title_kw"):
+    with tf.variable_scope(scope, reuse=tf.compat.v1.AUTO_REUSE):
         encode_model = BertModel(config=config,
                                 is_training=is_training,
                                 input_ids=input_ids,
@@ -209,10 +210,9 @@ def model_fn_builder(config,
         def init_embedding_table(scoffold, sess):
             sess.run(embedding_table.initializer, {embedding_table.initial_value: embedding_table_value})
 
+        scaffold = None
         if embedding_table_value is not None:
             scaffold = tf.train.Scaffold(init_fn=init_embedding_table)
-        else:
-            scaffold = None
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
         sen_a_output, sen_a_attention_probs = create_kwextraction_model(input_ids=input_ids_a,
@@ -222,7 +222,8 @@ def model_fn_builder(config,
                                                                         embedding_table=embedding_table,
                                                                         hidden_size=config.hidden_size,
                                                                         query_act=get_activation(config.query_act),
-                                                                        key_act=None)
+                                                                        key_act=config.key_act,
+                                                                        scope="title_kw")
 
         if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
             sen_b_output, sen_b_attention_probs = create_kwextraction_model(input_ids=input_ids_b,
@@ -232,7 +233,8 @@ def model_fn_builder(config,
                                                                             embedding_table=embedding_table,
                                                                             hidden_size=config.hidden_size,
                                                                             query_act=get_activation(config.query_act),
-                                                                            key_act=None)
+                                                                            key_act=config.key_act,
+                                                                            scope="context_kw")
 
             total_loss = None
             with tf.variable_scope("sen_pair_loss"):
@@ -241,6 +243,7 @@ def model_fn_builder(config,
                         concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
                         logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
                         probabilities = tf.nn.softmax(logits)
+                        labels = tf.cast(labels, tf.int32)
                         softmax_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels),
                                                                    logits=logits)
                         total_loss = softmax_loss
@@ -249,6 +252,7 @@ def model_fn_builder(config,
                         cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
                         cosine_val = cosine_similarity(sen_a_output, sen_b_output)
                         cosine_val = tf.reshape(cosine_val, [-1])
+                        labels = tf.cast(labels, tf.float32)
                         total_loss = tf.losses.mean_squared_error(labels, cosine_val)
                 else:
                     raise ValueError("task name error")
@@ -268,7 +272,6 @@ def model_fn_builder(config,
                                 init_string)
 
         output_spec = None
-        scaffold = None
         if mode == tf.estimator.ModeKeys.TRAIN:
             train_op = optimization.create_optimizer(
                 total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
@@ -280,13 +283,17 @@ def model_fn_builder(config,
                                                      scaffold=scaffold)
         elif mode == tf.estimator.ModeKeys.EVAL:
             if task == "classify":
-                predictions = probabilities
+                predictions = tf.argmax(probabilities)
+                output_spec = tf.estimator.EstimatorSpec(mode=mode,
+                                                        loss=total_loss,
+                                                        eval_metric_ops={"auc": tf.metrics.auc(labels, predictions)},
+                                                        scaffold=scaffold)
             elif task == "regression":
                 predictions = cosine_val
-            output_spec = tf.estimator.EstimatorSpec(mode=mode,
-                                                     loss=total_loss,
-                                                     eval_metric_ops={"auc": tf.metrics.auc(labels, cosine_val)},
-                                                     scaffold=scaffold)
+                output_spec = tf.estimator.EstimatorSpec(mode=mode,
+                                                        loss=total_loss,
+                                                        eval_metric_ops={"auc": tf.metrics.auc(labels, cosine_val)},
+                                                        scaffold=scaffold)
         else:
             output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                      predictions={"sen_embedding": sen_a_output,
@@ -294,6 +301,34 @@ def model_fn_builder(config,
                                                                   "word_attention_probs": sen_a_attention_probs})
         return output_spec
     return model_fn
+
+
+def load_vocab_file(vocab_file):
+    vocab = []
+    with open(vocab_file, "r", encoding="utf-8") as fp:
+        for line in fp:
+            word = line.strip().split('\t')
+            vocab.append(word)
+    return vocab
+
+
+def load_embedding_table(embedding_file, vocab_file):
+    vectors = []
+    vocab = load_vocab_file(vocab_file)
+    with open(embedding_file, "r", encoding="utf-8") as fp:
+        lines = fp.readlines()
+        for idx, line in enumerate(lines):
+            if idx == 0:
+                continue
+            parts = line.strip().split(' ')
+            word = parts[0]
+            vec = parts[1:]
+            vectors.append(vec)
+    
+    embedding_table = np.asarray(vectors, dtype=np.float32)
+    tf.logging.info("load embedding_table, shape is %s"%(str(embedding_table.shape)))
+    assert len(vocab) == len(vectors)
+    return embedding_table
 
 
 def main(_):
@@ -322,6 +357,10 @@ def main(_):
             save_checkpoints_steps=num_train_steps/FLAGS.num_train_epochs,
             keep_checkpoint_max=5,
         )
+
+    embedding_table = None
+    if FLAGS.embedding_table is not None:
+        embedding_table = load_embedding_table(FLAGS.embedding_table, FLAGS.vocab_file)
 
     model_fn = model_fn_builder(config=config,
                                 learning_rate=1e-5,
