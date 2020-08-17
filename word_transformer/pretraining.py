@@ -34,6 +34,7 @@ flags.DEFINE_string("cached_tfrecord", None, "cached tfrecord file path")
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
 flags.DEFINE_float("learning_rate", 1e-5, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
+flags.DEFINE_integer("mask_num", 25, "The maximum mask num")
 flags.DEFINE_integer("batch_size", 32, "Total batch size.")
 flags.DEFINE_string("task_type", "classify", "task type name, classify or regression")
 
@@ -48,6 +49,7 @@ flags.DEFINE_integer("save_checkpoints_steps", 1000,"")
 
 flags.DEFINE_integer("num_train_epochs", 10, "num_train_steps")
 flags.DEFINE_integer("num_warmup_steps", 10, "num_warmup_steps")
+flags.DEFINE_integer("num_train_steps", 10, "num_train_steps")
 
 
 
@@ -57,7 +59,7 @@ def gather_indexes(sequence_tensor,positions):
     batch_size = sequence_shape[0]
     seq_length = sequence_shape[1]
     hidden_size = sequence_shape[2]
-    
+
     flat_offsets = tf.reshape(
         tf.range(0,batch_size, dtype=tf.int64) * seq_length, [-1,1])
     flat_positions = tf.reshape(positions + flat_offsets, [-1])
@@ -139,7 +141,7 @@ def get_pred_label_output(config,input_tensor,label=None,is_training=False):
             "output_bias",
             shape=[config.label_size],
             initializer=tf.zeros_initializer())
-        
+
         logits = tf.matmul(input_tensor, output_weights, transpose_b=True)
         logits = tf.nn.bias_add(logits, output_bias)
         label_probs = tf.nn.softmax(logits, axis=-1)
@@ -160,7 +162,7 @@ def build_negative_sample_weights(input_tensor,label_ids,weights,sample_scope,ne
                                        minval=0,
                                        maxval=sample_scope-1,
                                        dtype=tf.int64)
-    
+
     all_ids = tf.concat([label_ids,neg_sample_ids],axis=1)
     logits_weights = tf.gather(weights, all_ids)
     if num_heads:
@@ -172,14 +174,14 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
                          label_ids, label_weights, num_heads, rng):
     batch_size = tf.shape(input_tensor)[0]
     position_size = tf.shape(label_weights)[1]
-    
+
     input_tensor = gather_indexes(input_tensor, positions)
     with tf.variable_scope("lm_predictions"):
         with tf.variable_scope("lm_out_layer"):
             input_tensor = tf.layers.dense(
                 input_tensor,
                 units=config.hidden_size,
-                activation=get_activation(config.hidden_act),
+                activation=get_activation("tanh"),
                 kernel_initializer=create_initializer(0.1)
             )
             input_tensor = layer_norm(input_tensor)
@@ -188,22 +190,22 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
                 "lm_output_bias",
                 shape=[config.vocab_size],
                 initializer=tf.zeros_initializer())
-            
+
             neg_sample_num = config.neg_sample_num
-            # reshape label_ids from [batch_size,position_size] to [batch_size*position_size] 
+            # reshape label_ids from [batch_size,position_size] to [batch_size*position_size]
             label_ids = tf.reshape(label_ids, [-1, 1])
             # negative shape [batch_size*position_size, 1 + neg_sample_num, hidden_size]
             negative_sample_weights = build_negative_sample_weights(input_tensor, label_ids, word_weights, config.vocab_size, neg_sample_num, rng, num_heads)
             negative_sample_bias = build_negative_sample_weights(input_tensor,label_ids, word_bias,config.vocab_size,neg_sample_num,rng)
-            
+
             input_tensor = tf.expand_dims(input_tensor, axis=1)
             # change input_tensor shape to: [batch_size*position_size,1,hidden_size],
             # in order to get logits as shape [batch_size*position_size, 1, 1 + neg_sample_num]
             input_tensor = tf.expand_dims(input_tensor, axis=1)
-            
+
             # reshape negative_sample_weights, res: [batch_size*position_size, hidden_size, 1 + neg_sample_num]
             negative_sample_weights = tf.transpose(negative_sample_weights, perm=[0, 2, 1])
-            
+
             # input_tensor:[batch_size*position_size , 1, hidden_size]
             # negative_sample_weights:[batch_size*position_size, hidden_size, 1 + neg_sample_num]
             # logits: [batch_size, position_size, 1 + neg_sample_num]
@@ -212,7 +214,7 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
             logits = tf.reshape(logits, [-1,1+neg_sample_num])
             tf.logging.debug("logits shape:%s",str(logits.shape.as_list()))
             logits = tf.add(logits, negative_sample_bias)
-            
+
             neg_label = tf.zeros(
                 shape=[batch_size*position_size, neg_sample_num],
                 dtype=tf.float32,
@@ -221,18 +223,18 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
                 shape=[batch_size*position_size, 1],
                 dtype=tf.float32,
                 name="pos_label")
-            
+
             one_hot_labels = tf.concat([pos_label, neg_label], axis=1)
-            
-            
+
+
             #per_example_loss shape: [bactch_size*position_size,1 + neg_sample_ids]
             per_example_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=one_hot_labels,
                                                                        logits=logits,
                                                                        name="pred_lm_loss")
             tf.logging.debug("per_example_loss shape:%s"%(per_example_loss.shape.as_list()))
-            
+
             per_example_loss = tf.reduce_sum(tf.reshape(per_example_loss, shape=[batch_size,position_size,1 + neg_sample_num]), axis=[-1])
-            
+
             # The `positions` tensor might be zero-padded (if the sequence is too
             # short to have the maximum number of predictions). The `label_weights`
             # tensor has a value of 1.0 for every real predictions and 0.0 for the
@@ -245,7 +247,7 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
 
     return (loss, per_example_loss)
 
-    
+
 
 def create_pretraining_model(config,
                               input_ids,

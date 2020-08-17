@@ -23,7 +23,8 @@ class BaseConfig(object):
                  initializer_range=0.02,
                  label_nums=2,
                  query_act="tanh",
-                 key_act="tanh"):
+                 key_act="tanh",
+                 neg_sample_num=5):
         self.vocab_size = vocab_size
         self.embedding_size = embedding_size
         self.hidden_size = hidden_size
@@ -38,6 +39,7 @@ class BaseConfig(object):
         self.label_nums = label_nums
         self.query_act = query_act
         self.key_act = key_act
+        self.neg_sample_num = neg_sample_num
 
     @classmethod
     def from_dict(cls, json_object):

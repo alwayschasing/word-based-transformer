@@ -279,6 +279,7 @@ def model_fn_builder(config,
         tvars = tf.trainable_variables()
         initialized_variable_names = {}
         if init_checkpoint:
+            tf.logging.info("get assignment_map from checkpoint")
             (assignment_map, initialized_variable_names) = get_assignment_map_from_checkpoint(tvars, init_checkpoint)
             tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
 
