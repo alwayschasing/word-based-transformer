@@ -39,11 +39,13 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
     if ex_index < 5:
         tf.logging.info("*** Example ***")
         tf.logging.info("guid: %s" % (example.guid))
-        tf.logging.info("tokens_a: %s" % " ".join(tokens_a))
+        tf.logging.info("text_a:#%s#" % (example.text_a))
+        tf.logging.info("tokens_a: #%s" % "#".join(tokens_a))
         tf.logging.info("input_ids_a: %s" % " ".join([str(x) for x in input_ids_a]))
         tf.logging.info("input_mask_a: %s" % " ".join([str(x) for x in input_mask_a]))
         if tokens_b is not None:
-            tf.logging.info("tokens_b: %s" % " ".join(tokens_b))
+            tf.logging.info("text_b:#%s#" % (example.text_b))
+            tf.logging.info("tokens_b: #%s" % "#".join(tokens_b))
             tf.logging.info("input_ids_b: %s" % " ".join([str(x) for x in input_ids_b]))
             tf.logging.info("input_mask_b: %s" % " ".join([str(x) for x in input_mask_b]))
         tf.logging.info("label: %s" % (str(example.label)))

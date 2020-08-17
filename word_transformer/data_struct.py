@@ -64,16 +64,20 @@ class SenpairProcessor(DataProcessor):
         examples = []
         for (i, line) in enumerate(lines):
             guid = "%d" % (i)
-            text_a = tokenization.convert_to_unicode(line[0])
+            text_a = tokenization.convert_to_unicode(line[0].strip())
             text_b = None
             if set_type == "test":
                 label = 1
             else:
-                if len(line) < 3:
-                    logging.error("[data error] line %d, %s" % (i, line))
+                if len(line) != 3:
+                    logging.error("[data error] line %d, %s, parts less 3" % (i, line))
                     raise ValueError("data format error, parts less 3")
-                text_b = tokenization.convert_to_unicode(line[1])
+                    continue
+                text_b = tokenization.convert_to_unicode(line[1].strip())
                 label = tokenization.convert_to_unicode(line[2])
+                if text_b is None:
+                    raise ValueError("text_b None")
+                    
             examples.append(
                 InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples

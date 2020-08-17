@@ -168,13 +168,13 @@ def create_training_instance(ins_idx, tokens_a, tokens_b, label, max_seq_length,
 
     if ins_idx < 5:
         tf.logging.info("*** Example ***")
-        tf.logging.info("tokens_a: %s" % " ".join(tokens_a))
+        tf.logging.info("tokens_a: %s" % "#".join(tokens_a))
         tf.logging.info("input_ids_a: %s" % " ".join([str(x) for x in input_ids_a]))
         tf.logging.info("input_mask_a: %s" % " ".join([str(x) for x in input_mask_a]))
         tf.logging.info("masked_lm_ids_a: %s" % " ".join([str(x) for x in masked_lm_ids_a]))
         tf.logging.info("masked_lm_positions_a: %s" % " ".join([str(x) for x in masked_lm_positions_a]))
         tf.logging.info("masked_lm_weights_a: %s" % " ".join([str(x) for x in masked_lm_weights_a]))
-        tf.logging.info("tokens_b: %s" % " ".join(tokens_b))
+        tf.logging.info("tokens_b: %s" % "#".join(tokens_b))
         tf.logging.info("input_ids_b: %s" % " ".join([str(x) for x in input_ids_b]))
         tf.logging.info("input_mask_b: %s" % " ".join([str(x) for x in input_mask_b]))
         tf.logging.info("masked_lm_ids_b: %s" % " ".join([str(x) for x in masked_lm_ids_b]))

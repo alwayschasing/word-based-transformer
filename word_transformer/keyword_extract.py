@@ -337,8 +337,6 @@ def load_embedding_table(embedding_file, vocab_file):
     with open(embedding_file, "r", encoding="utf-8") as fp:
         lines = fp.readlines()
         for idx, line in enumerate(lines):
-            if idx == 0:
-                continue
             parts = line.strip().split(' ')
             word = parts[0]
             vec = parts[1:]
@@ -417,7 +415,7 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=True
         )
-
+        
         estimator.train(input_fn=train_input_fn,
                         max_steps=num_train_steps)
     elif FLAGS.do_eval:
@@ -438,7 +436,7 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=False
         )
-
+        
         if FLAGS.eval_model is not None:
             eval_model_path = os.path.join(FLAGS.output_dir, FLAGS.eval_model)
         else:
