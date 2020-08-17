@@ -292,10 +292,12 @@ def model_fn_builder(config,
 
         output_spec = None
         if mode == tf.estimator.ModeKeys.TRAIN:
-            train_op = optimization.create_optimizer(
-                total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
+            #train_op = optimization.create_optimizer(
+                #total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
+            optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
+            train_op = optimizer.minimize(total_loss, global_step=tf.train.get_global_step())
             log_hook = tf.train.LoggingTensorHook({"total_loss": total_loss}, every_n_iter=10)
-            output_spec = tf.estimator.EstimatorSpec(mode = mode,
+            output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                      loss=total_loss,
                                                      train_op=train_op,
                                                      training_hooks=[log_hook],
@@ -415,7 +417,7 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=True
         )
-        
+
         estimator.train(input_fn=train_input_fn,
                         max_steps=num_train_steps)
     elif FLAGS.do_eval:
@@ -436,7 +438,7 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=False
         )
-        
+
         if FLAGS.eval_model is not None:
             eval_model_path = os.path.join(FLAGS.output_dir, FLAGS.eval_model)
         else:

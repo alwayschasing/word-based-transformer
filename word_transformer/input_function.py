@@ -49,7 +49,7 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
             tf.logging.info("input_ids_b: %s" % " ".join([str(x) for x in input_ids_b]))
             tf.logging.info("input_mask_b: %s" % " ".join([str(x) for x in input_mask_b]))
         tf.logging.info("label: %s" % (str(example.label)))
-    
+
     if tokens_b is not None:
         feature = InputFeatures(
             input_ids_a=input_ids_a,
@@ -57,7 +57,7 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
             input_ids_b=input_ids_b,
             input_mask_b=input_mask_b,
             label=example.label
-        ) 
+        )
     else:
         feature = InputFeatures(
             input_ids_a=input_ids_a,
@@ -66,7 +66,7 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
         )
     return feature
 
-def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer, output_file, 
+def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer, output_file,
                                             set_type="train", label_type="int", single_text=False, do_token=True):
     writer = tf.python_io.TFRecordWriter(output_file)
     error_count = 0
@@ -140,5 +140,34 @@ def file_based_input_fn_builder(input_file, seq_length, is_training, single_text
     return input_fn
 
 
+def pretrain_input_fn_builder(input_file, seq_length, mask_num, is_training, single_text=False):
+    name_to_features = {
+        "input_ids_a": tf.FixedLenFeature([seq_length], tf.int64),
+        "input_mask_a": tf.FixedLenFeature([seq_length], tf.int64),
+        "masked_lm_ids_a": tf.FixedLenFeature([mask_num], tf.int64),
+        "masked_lm_positions_a": tf.FixedLenFeature([mask_num], tf.int64),
+        "masked_lm_weights_a": tf.FixedLenFeature([mask_num], tf.float32),
+        "input_ids_b": tf.FixedLenFeature([seq_length], tf.int64),
+        "input_mask_b": tf.FixedLenFeature([seq_length], tf.int64),
+        "masked_lm_ids_b": tf.FixedLenFeature([mask_num], tf.int64),
+        "masked_lm_positions_b": tf.FixedLenFeature([mask_num], tf.int64),
+        "masked_lm_weights_b": tf.FixedLenFeature([mask_num], tf.float32),
+        "labels": tf.FixedLenFeature([], tf.int64)
+    }
 
+    def _decode_record(record, name_to_features):
+        example = tf.parse_single_example(record, name_to_features)
+        return example
+
+    def input_fn(params):
+        batch_size = params["batch_size"]
+        d = tf.data.TFRecordDataset(input_file)
+        if is_training:
+            d = d.repeat()
+            d = d.shuffle(buffer_size=100)
+
+        d = d.map(lambda record: _decode_record(record, name_to_features))
+        d = d.batch(batch_size=batch_size, drop_remainder=False)
+        return d
+    return input_fn
 

@@ -3,21 +3,20 @@ import tensorflow as tf
 import os
 import math
 import numpy as np
+import time
+import random
 import collections
 from models import BertModel
 from models import BilstmAttnModel
 from models.bert_transformer import get_shape_list
 from models.bert_transformer import create_initializer
-from models.bert_transformer import create_attention_mask_from_input_mask
 from models.bert_transformer import optimization
 from models.bert_transformer import get_assignment_map_from_checkpoint
 from models.bert_transformer import get_activation
-from models.bert_transformer import BertConfig
-from data_struct import SenpairProcessor
-from input_function import file_based_convert_examples_to_features
-from input_function import file_based_input_fn_builder
+from input_function import pretrain_input_fn_builder
 from config import BaseConfig
 import tokenization
+from models import layer_norm
 
 
 flags = tf.flags
@@ -33,7 +32,7 @@ flags.DEFINE_bool("embedding_table_trainable", True, "embedding_table_trainable"
 flags.DEFINE_string("input_file", None, "input_file path")
 flags.DEFINE_string("cached_tfrecord", None, "cached tfrecord file path")
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
-flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
+flags.DEFINE_float("learning_rate", 1e-5, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
 flags.DEFINE_integer("batch_size", 32, "Total batch size.")
 flags.DEFINE_string("task_type", "classify", "task type name, classify or regression")
@@ -54,7 +53,7 @@ flags.DEFINE_integer("num_warmup_steps", 10, "num_warmup_steps")
 
 def gather_indexes(sequence_tensor,positions):
     """Gathers the vectors at the specific positions over a minibatch."""
-    sequence_shape = modeling.get_shape_list(sequence_tensor, expected_rank=3)
+    sequence_shape = get_shape_list(sequence_tensor, expected_rank=3)
     batch_size = sequence_shape[0]
     seq_length = sequence_shape[1]
     hidden_size = sequence_shape[2]
@@ -100,21 +99,6 @@ def word_attention_layer(input_tensor,
         kernel_initializer=create_initializer(initializer_range)
     )
 
-    #key_layer = tf.layers.dense(
-    #    inputs=input_tensor,
-    #    units=hidden_size,
-    #    activation=key_act,
-    #    name="key",
-    #    kernel_initializer=create_initializer(initializer_range)
-    #)
-
-    #value_layer = tf.layers.dense(
-    #    inputs=input_tensor,
-    #    units=hidden_size,
-    #    activation=value_act,
-    #    name="value",
-    #    kernel_initializer=create_initializer(initializer_range)
-    #)
     value_layer = input_tensor
 
     query_shape_list = get_shape_list(query_layer, expected_rank=3)
@@ -142,31 +126,7 @@ def word_attention_layer(input_tensor,
 
     # attention_probs shape: [batch_size, seq_length]
     attention_probs = tf.nn.softmax(attention_scores)
-    # value_layer = tf.reshape(value_layer, [batch_size, seq_length, hidden_size])
-    # value_layer shape : [batch_size, num_heads, seq_length, size_per_head]
-    # value_layer = tf.transpose(value_layer, [0, 2, 1, 3])
     context_layer = tf.reduce_mean(tf.math.multiply(tf.reshape(attention_probs, [batch_size, seq_length, 1]), value_layer), axis=1)
-    # context_layer shape : [batch_size, seq_length, hidden_size]
-    # context_layer = tf.transpose(context_layer, [0, 2, 1, 3])
-    # context_layer = tf.reshape(context_layer, [batch_size, seq_length, hidden_size])
-
-    #if pooling_strategy == "mean":
-    # input_mask_expanded = tf.cast(input_mask.expand(), float)
-    #float_mask = tf.cast(input_mask, tf.float32)
-    #float_mask = tf.reshape(float_mask, [batch_size, seq_length, 1])
-    #tf.logging.debug("context_layer shape:%s" % (get_shape_list(context_layer)))
-    #tf.logging.debug("float_mask shape:%s" % (get_shape_list(float_mask)))
-    #pooling_output = tf.math.multiply(context_layer, float_mask)
-    #tf.logging.debug("[check shape1 shape:%s" % (get_shape_list(pooling_output)))
-    #pooling_output = tf.reduce_sum(context_layer, axis=1)
-    #tf.logging.debug("[check shape2 shape:%s" % (get_shape_list(pooling_output)))
-    #divisor = tf.reduce_sum(float_mask, axis=1)
-    #tf.logging.debug("[check shape3 shape:%s" % (get_shape_list(divisor)))
-    #pooling_output = pooling_output/divisor
-    #tf.logging.debug("[check shape4 shape:%s" % (get_shape_list(pooling_output)))
-    #tf.logging.debug("[check attention_probs shape:%s" % (get_shape_list(attention_probs)))
-    tf.logging.debug("[check context_layer shape:%s" % (get_shape_list(context_layer)))
-    tf.logging.debug("[check attention_probs shape:%s" % (get_shape_list(attention_probs)))
     return context_layer, attention_probs
 
 def get_pred_label_output(config,input_tensor,label=None,is_training=False):
@@ -174,7 +134,7 @@ def get_pred_label_output(config,input_tensor,label=None,is_training=False):
         output_weights = tf.get_variable(
             "output_weights",
             shape=[config.label_size, config.hidden_size],
-            initializer=modeling.create_initializer(config.initializer_range))
+            initializer=create_initializer(config.initializer_range))
         output_bias = tf.get_variable(
             "output_bias",
             shape=[config.label_size],
@@ -189,12 +149,12 @@ def get_pred_label_output(config,input_tensor,label=None,is_training=False):
             one_hot_label = tf.one_hot(label, depth=2, dtype=tf.float32)
             per_example_loss = -tf.reduce_sum(one_hot_label * log_probs, axis = -1)
             loss = tf.reduce_mean(per_example_loss)
-            return (loss,per_example_loss,label_probs)
+            return (loss, per_example_loss, label_probs)
         else:
             return label_probs
 
 def build_negative_sample_weights(input_tensor,label_ids,weights,sample_scope,neg_num,rng,num_heads=None):
-    input_shape = modeling.get_shape_list(input_tensor)
+    input_shape = get_shape_list(input_tensor)
     tmp_batch_size = input_shape[0]
     neg_sample_ids = tf.random.uniform(shape=[tmp_batch_size,neg_num],
                                        minval=0,
@@ -208,8 +168,8 @@ def build_negative_sample_weights(input_tensor,label_ids,weights,sample_scope,ne
     return logits_weights
 
 
-def get_masked_lm_output(config, input_tensor, output_weights, positions,
-                         label_ids, label_weights,num_heads,rng):
+def get_masked_lm_output(config, input_tensor, word_weights, positions,
+                         label_ids, label_weights, num_heads, rng):
     batch_size = tf.shape(input_tensor)[0]
     position_size = tf.shape(label_weights)[1]
     
@@ -219,31 +179,30 @@ def get_masked_lm_output(config, input_tensor, output_weights, positions,
             input_tensor = tf.layers.dense(
                 input_tensor,
                 units=config.hidden_size,
-                activation=modeling.get_activation(config.hidden_act),
-                kernel_initializer=modeling.create_initializer()
+                activation=get_activation(config.hidden_act),
+                kernel_initializer=create_initializer(0.1)
             )
-            input_tensor = modeling.layer_norm(input_tensor)
-            
-            output_bias = tf.get_variable(
+            input_tensor = layer_norm(input_tensor)
+
+            word_bias = tf.get_variable(
                 "lm_output_bias",
                 shape=[config.vocab_size],
                 initializer=tf.zeros_initializer())
             
             neg_sample_num = config.neg_sample_num
             # reshape label_ids from [batch_size,position_size] to [batch_size*position_size] 
-            label_ids = tf.reshape(label_ids,[-1,1])
-
+            label_ids = tf.reshape(label_ids, [-1, 1])
             # negative shape [batch_size*position_size, 1 + neg_sample_num, hidden_size]
-            negative_sample_weights = build_negative_sample_weights(input_tensor,label_ids,output_weights,config.vocab_size,neg_sample_num,rng,num_heads)
-            negative_sample_bias = build_negative_sample_weights(input_tensor,label_ids,output_bias,config.vocab_size,neg_sample_num,rng)
+            negative_sample_weights = build_negative_sample_weights(input_tensor, label_ids, word_weights, config.vocab_size, neg_sample_num, rng, num_heads)
+            negative_sample_bias = build_negative_sample_weights(input_tensor,label_ids, word_bias,config.vocab_size,neg_sample_num,rng)
             
-            input_tensor = tf.expand_dims(input_tensor,axis=1)
+            input_tensor = tf.expand_dims(input_tensor, axis=1)
             # change input_tensor shape to: [batch_size*position_size,1,hidden_size],
             # in order to get logits as shape [batch_size*position_size, 1, 1 + neg_sample_num]
-            input_tensor = tf.expand_dims(input_tensor,axis=1)
+            input_tensor = tf.expand_dims(input_tensor, axis=1)
             
             # reshape negative_sample_weights, res: [batch_size*position_size, hidden_size, 1 + neg_sample_num]
-            negative_sample_weights = tf.transpose(negative_sample_weights,perm=[0,2,1])
+            negative_sample_weights = tf.transpose(negative_sample_weights, perm=[0, 2, 1])
             
             # input_tensor:[batch_size*position_size , 1, hidden_size]
             # negative_sample_weights:[batch_size*position_size, hidden_size, 1 + neg_sample_num]
@@ -255,15 +214,15 @@ def get_masked_lm_output(config, input_tensor, output_weights, positions,
             logits = tf.add(logits, negative_sample_bias)
             
             neg_label = tf.zeros(
-                shape=[batch_size*position_size,neg_sample_num],
+                shape=[batch_size*position_size, neg_sample_num],
                 dtype=tf.float32,
                 name="neg_label")
             pos_label = tf.ones(
-                shape=[batch_size*position_size,1],
+                shape=[batch_size*position_size, 1],
                 dtype=tf.float32,
                 name="pos_label")
             
-            one_hot_labels = tf.concat([pos_label,neg_label],axis=1)
+            one_hot_labels = tf.concat([pos_label, neg_label], axis=1)
             
             
             #per_example_loss shape: [bactch_size*position_size,1 + neg_sample_ids]
@@ -272,7 +231,7 @@ def get_masked_lm_output(config, input_tensor, output_weights, positions,
                                                                        name="pred_lm_loss")
             tf.logging.debug("per_example_loss shape:%s"%(per_example_loss.shape.as_list()))
             
-            per_example_loss = tf.reduce_sum(tf.reshape(per_example_loss,shape=[batch_size,position_size,1 + neg_sample_num]), axis=[-1])
+            per_example_loss = tf.reduce_sum(tf.reshape(per_example_loss, shape=[batch_size,position_size,1 + neg_sample_num]), axis=[-1])
             
             # The `positions` tensor might be zero-padded (if the sequence is too
             # short to have the maximum number of predictions). The `label_weights`
@@ -288,7 +247,7 @@ def get_masked_lm_output(config, input_tensor, output_weights, positions,
 
     
 
-def create_kwextraction_model(config,
+def create_pretraining_model(config,
                               input_ids,
                               input_mask,
                               is_training=None,
@@ -296,7 +255,7 @@ def create_kwextraction_model(config,
                               hidden_size=None,
                               query_act=None,
                               key_act=None,
-                              scope="title_kw",
+                              scope="text_kw",
                               model_name="bert"):
     with tf.variable_scope(scope, reuse=tf.compat.v1.AUTO_REUSE):
         if model_name == "bert":
@@ -314,6 +273,7 @@ def create_kwextraction_model(config,
                                                                 hidden_size=hidden_size,
                                                                 query_act=query_act,
                                                                 key_act=key_act)
+
         elif model_name == "bilstm":
             encode_model = BilstmAttnModel(config=config,
                                           is_training=is_training,
@@ -325,7 +285,7 @@ def create_kwextraction_model(config,
             keyword_probs = encode_model.get_keyword_probs()
         else:
             raise ValueError("model type error")
-        return pooling_output, keyword_probs
+        return sequence_output, pooling_output, keyword_probs
 
 
 def model_fn_builder(config,
@@ -349,14 +309,23 @@ def model_fn_builder(config,
 
         input_ids_a = features["input_ids_a"]
         input_mask_a = features["input_mask_a"]
-        if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
-            input_ids_b = features["input_ids_b"]
-            input_mask_b = features["input_mask_b"]
-            labels = features["labels"]
+        masked_lm_ids_a = features["masked_lm_ids_a"]
+        masked_lm_positions_a = features["masked_lm_positions_a"]
+        masked_lm_weights_a = features["masked_lm_weights_a"]
+
+        input_ids_b = features["input_ids_b"]
+        input_mask_b = features["input_mask_b"]
+        masked_lm_ids_b = features["masked_lm_ids_b"]
+        masked_lm_positions_b = features["masked_lm_positions_b"]
+        masked_lm_weights_b = features["masked_lm_weights_b"]
+        labels = features["labels"]
 
         embedding_table = tf.get_variable("embedding_table",
                                           shape=[config.vocab_size, config.embedding_size],
                                           trainable=embedding_table_trainable)
+        embedding_weights = tf.get_variable("embedding_weights",
+                                            shape=[config.vocab_size, config.hidden_size],
+                                            trainable=True)
 
         def init_embedding_table(scoffold, sess):
             sess.run(embedding_table.initializer, {embedding_table.initial_value: embedding_table_value})
@@ -366,30 +335,40 @@ def model_fn_builder(config,
             scaffold = tf.train.Scaffold(init_fn=init_embedding_table)
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
-        sen_a_output, sen_a_attention_probs = create_kwextraction_model(input_ids=input_ids_a,
-                                                                        input_mask=input_mask_a,
-                                                                        config=config,
-                                                                        is_training=is_training,
-                                                                        embedding_table=embedding_table,
-                                                                        hidden_size=config.hidden_size,
-                                                                        query_act=get_activation(config.query_act),
-                                                                        key_act=config.key_act,
-                                                                        scope="title_kw",
-                                                                        model_name=model_name)
+        sen_a_output, sen_a_attention_probs = create_pretraining_model(input_ids=input_ids_a,
+                                                                      input_mask=input_mask_a,
+                                                                      config=config,
+                                                                      is_training=is_training,
+                                                                      embedding_table=embedding_table,
+                                                                      hidden_size=config.hidden_size,
+                                                                      query_act=get_activation(config.query_act),
+                                                                      key_act=config.key_act,
+                                                                      scope="text_kw",
+                                                                      model_name=model_name)
 
         if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
-            sen_b_output, sen_b_attention_probs = create_kwextraction_model(input_ids=input_ids_b,
-                                                                            input_mask=input_mask_b,
-                                                                            config=config,
-                                                                            is_training=is_training,
-                                                                            embedding_table=embedding_table,
-                                                                            hidden_size=config.hidden_size,
-                                                                            query_act=get_activation(config.query_act),
-                                                                            key_act=config.key_act,
-                                                                            scope="context_kw",
-                                                                            model_name=model_name)
+            sen_b_output, sen_b_attention_probs = create_pretraining_model(input_ids=input_ids_b,
+                                                                           input_mask=input_mask_b,
+                                                                           config=config,
+                                                                           is_training=is_training,
+                                                                           embedding_table=embedding_table,
+                                                                           hidden_size=config.hidden_size,
+                                                                           query_act=get_activation(config.query_act),
+                                                                           key_act=config.key_act,
+                                                                           scope="text_kw",
+                                                                           model_name=model_name)
 
-            total_loss = None
+            total_loss = 0
+            with tf.variable_scope("mask_lm_loss"):
+                rng = random.Random(time.time())
+                (masked_lm_loss_a, masked_lm_example_loss_a) = get_masked_lm_output(
+                    config, sen_a_output, embedding_weights, masked_lm_positions_a,
+                    masked_lm_ids_a, masked_lm_weights_a, rng)
+
+                (masked_lm_loss_b, masked_lm_example_loss_b) = get_masked_lm_output(
+                    config, sen_b_output, embedding_weights, masked_lm_positions_b,
+                    masked_lm_ids_b, masked_lm_weights_b, rng)
+
             with tf.variable_scope("sen_pair_loss"):
                 if task == "classify":
                     with tf.variable_scope("classify_loss"):
@@ -397,18 +376,24 @@ def model_fn_builder(config,
                         logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
                         probabilities = tf.nn.softmax(logits)
                         labels = tf.cast(labels, tf.int32)
-                        softmax_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
+                        classify_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
                                                                    logits=logits)
-                        total_loss = softmax_loss
                 elif task == "regression":
                     with tf.variable_scope("regression_loss"):
                         cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
                         cosine_val = cosine_similarity(sen_a_output, sen_b_output)
                         cosine_val = tf.reshape(cosine_val, [-1])
                         labels = tf.cast(labels, tf.float32)
-                        total_loss = tf.losses.mean_squared_error(labels, cosine_val)
+                        regression_loss= tf.losses.mean_squared_error(labels, cosine_val)
                 else:
                     raise ValueError("task name error")
+
+            if task == "regression":
+                total_loss = masked_lm_loss_a + masked_lm_loss_b + regression_loss
+            elif task == "classify":
+                total_loss = masked_lm_loss_a + masked_lm_loss_b + classify_loss
+            else:
+                raise ValueError("task error, loss define error")
 
         tvars = tf.trainable_variables()
         initialized_variable_names = {}
@@ -488,7 +473,6 @@ def main(_):
     tf.logging.set_verbosity(tf.logging.INFO)
     #tf.logging.set_verbosity(tf.logging.DEBUG)
     os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id
-    processor = SenpairProcessor()
 
     if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:
         raise ValueError("At least one of `do_train`, `do_eval` or `do_predict' must be True.")
@@ -500,11 +484,8 @@ def main(_):
 
     run_config = None
     if FLAGS.do_train:
-        train_examples = processor.get_train_examples(FLAGS.input_file)
-        num_train_steps = int(
-            len(train_examples) / FLAGS.batch_size * FLAGS.num_train_epochs)
+        num_train_steps = FLAGS.num_train_steps
         num_warmup_steps = FLAGS.num_warmup_steps
-
         run_config = tf.estimator.RunConfig(
             save_summary_steps=100,
             save_checkpoints_steps=num_train_steps/FLAGS.num_train_epochs,
@@ -526,7 +507,7 @@ def main(_):
                                 model_name=FLAGS.model_name)
 
 
-    params = {"batch_size":FLAGS.batch_size}
+    params = {"batch_size": FLAGS.batch_size}
     estimator = tf.estimator.Estimator(model_fn=model_fn,
                                        model_dir=FLAGS.output_dir,
                                        config=run_config,
@@ -534,40 +515,19 @@ def main(_):
 
 
     if FLAGS.do_train:
-        if FLAGS.cached_tfrecord:
-            train_file = FLAGS.cached_tfrecord
-        else:
-            train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
-        if not os.path.exists(train_file):
-            file_based_convert_examples_to_features(
-                train_examples, FLAGS.max_seq_length, tokenizer, train_file)
+        train_file = FLAGS.input_file
         tf.logging.info("***** Running training *****")
-        tf.logging.info("  Num examples = %d", len(train_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
-        tf.logging.info("  Num steps = %d", num_train_steps)
-        del train_examples  # 释放train_examples内存
-        train_input_fn = file_based_input_fn_builder(
+        train_input_fn = pretrain_input_fn_builder(
             input_file=train_file,
             seq_length=FLAGS.max_seq_length,
+            mask_num=FLAGS.mask_num,
             is_training=True
         )
-
         estimator.train(input_fn=train_input_fn,
                         max_steps=num_train_steps)
     elif FLAGS.do_eval:
-        dev_examples = processor.get_train_examples(FLAGS.input_file)
-        if FLAGS.cached_tfrecord:
-            dev_file = FLAGS.cached_tfrecord
-        else:
-            dev_file = os.path.join(FLAGS.output_dir, "dev.tf_record")
-        if not os.path.exists(dev_file):
-            file_based_convert_examples_to_features(
-                dev_examples, FLAGS.max_seq_length, tokenizer, dev_file)
-        tf.logging.info("***** Running evaluation *****")
-        tf.logging.info("  Num examples = %d", len(dev_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
-        del dev_examples
-        eval_input_fn = file_based_input_fn_builder(
+        dev_file = FLAGS.input_file
+        eval_input_fn = pretrain_input_fn_builder(
             input_file=dev_file,
             seq_length=FLAGS.max_seq_length,
             is_training=False
@@ -588,57 +548,13 @@ def main(_):
             for key in sorted(result.keys()):
                 tf.logging.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
-    else:
-        predict_examples = processor.get_test_examples()
-        predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
-        file_based_convert_examples_to_features(predict_examples, FLAGS.max_seq_length, tokenizer, predict_file,
-                                                set_type="test", label_type="int", single_text=True)
 
-        tf.logging.info("***** Running prediction*****")
-        tf.logging.info("  Num examples = %d", len(predict_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.batch_size)
-        predict_input_fn = file_based_input_fn_builder(
-            input_file=predict_file,
-            seq_length=FLAGS.max_seq_length,
-            is_training=False,
-            single_text=True
-        )
-
-        if FLAGS.pred_model is not None:
-            pred_model_path = os.path.join(FLAGS.output_dir, FLAGS.pred_model)
-        else:
-            pred_model_path = None
-
-        result = estimator.predict(
-            input_fn=predict_input_fn,
-            checkpoint_path=pred_model_path
-        )
-
-        output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
-        with tf.gfile.GFile(output_predict_file, "w") as writer:
-            tf.logging.info("***** Predict results *****")
-            for (i, prediction) in enumerate(result):
-                sen_embedding = prediction["sen_embedding"]
-                input_ids = prediction["input_ids"]
-                word_attention_probs = prediction["word_attention_probs"]
-                sorted_keyword_idx = np.argsort(-word_attention_probs, axis=-1)
-
-                extracted_keywords = collections.OrderedDict()
-                for idx in sorted_keyword_idx:
-                    word_id = input_ids[idx]
-                    word_prob = word_attention_probs[idx]
-                    word = tokenizer.convert_ids_to_tokens([word_id])[0]
-                    extracted_keywords[word] = word_prob
-
-                keyword_output = " ".join(["%s:%f" % (kw, prob) for kw, prob in extracted_keywords.items()])
-                text_output = " ".join(tokenizer.convert_ids_to_tokens[input_ids])
-                writer.write("%s\t%s" % (keyword_output, text_output))
 
 if __name__ == "__main__":
-    #logging.basicConfig(level=logging.INFO, format="[%(asctime)s-%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     flags.mark_flag_as_required("config_file")
     flags.mark_flag_as_required("output_dir")
     flags.mark_flag_as_required("vocab_file")
+    flags.mark_flag_as_required("input_file")
     tf.app.run()
 
 

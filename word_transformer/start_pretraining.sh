@@ -8,15 +8,15 @@ config_file="/search/odin/liruihong/word-based-transformer/config_data/model_con
 vocab_file="/search/odin/liruihong/word-based-transformer/config_data/final_vocab.txt"
 input_file="/search/odin/liruihong/word-based-transformer/data/train_data_1000k.tsv"
 #input_file="/search/odin/liruihong/word-based-transformer/data/dev_data_100k.tsv"
-cached_train_data="/search/odin/liruihong/word-based-transformer/cached_data/train_data_1000k.tfrecord"
+cached_train_data="/search/odin/liruihong/word-based-transformer/cached_data/pretrain_data_1000k.tfrecord"
 cached_dev_data="/search/odin/liruihong/word-based-transformer/cached_data/dev_data_100k.tfrecord"
 output_dir="/search/odin/liruihong/word-based-transformer/model_output/pretrain_bilstm_attn_sep_clssify"
 embedding_table="/search/odin/liruihong/word-based-transformer/config_data/final_vocab_embedding.txt"
 eval_model=""
 
-python keyword_extract.py \
-    --gpu_id="2" \
-    --model_name="bilstm" \
+python pretraining.py \
+    --gpu_id="5" \
+    --model_name="bert" \
     --task_type="classify" \
     --config_file=$config_file \
     --vocab_file=$vocab_file \
