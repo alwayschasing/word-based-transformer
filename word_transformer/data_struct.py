@@ -24,6 +24,26 @@ class InputFeatures(object):
         self.input_mask_b = input_mask_b
         self.label = label
 
+class TrainingInstance(object):
+    def __init__(self,
+                 input_ids_a,
+                 input_mask_a,
+                 masked_lm_labels_a,
+                 masked_lm_pos_a,
+                 input_ids_b,
+                 input_mask_b,
+                 masked_lm_labels_b,
+                 masked_lm_pos_s,
+                 label):
+        self.input_ids_a = input_ids_a
+        self.input_mask_a = input_mask_a
+        self.masked_lm_labels_a = masked_lm_labels_a
+        self.masked_lm_pos_a = masked_lm_pos_a
+        self.input_ids_b = input_ids_b
+        self.input_mask_b = input_mask_b
+        self.masked_lm_labels_b = masked_lm_labels_b
+        self.masked_lm_pos_b = masked_lm_pos_b
+        self.label = label
 
 class DataProcessor(object):
     @classmethod

@@ -6,14 +6,14 @@
   "initializer_range": 0.1, 
   "intermediate_size": 512, 
   "num_attention_heads": 4, 
-  "num_hidden_layers": 2, 
+  "num_hidden_layers": 1, 
   "use_token_type":0,
   "use_position_embeddings":1,
   "type_vocab_size": 2, 
   "label_nums":2,
   "max_seq_length": 256,
   "max_position_embeddings": 256, 
-  "vocab_size": 780054,
+  "vocab_size": 780055,
   "embedding_size": 256,
   "query_act":"tanh"
 }

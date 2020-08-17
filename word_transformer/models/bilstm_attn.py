@@ -5,10 +5,7 @@ from .util import assert_rank
 
 
 class BilstmAttnModel(object):
-    def __init__(self, config, input_ids, input_mask, embedding_table=None, scope="bilstm_attn"):
-        shape_list = get_shape_list(input_ids)
-        batch_size = shape_list[0]
-        seq_length = shape_list[1]
+    def __init__(self, config, is_training, input_ids, input_mask, embedding_table=None, scope="bilstm_attn"):
         with tf.variable_scope(scope):
             with tf.variable_scope("embeddings"):
                 self.embedding_output, self.embedding_table = embedding_lookup(
@@ -31,15 +28,16 @@ class BilstmAttnModel(object):
                         initializer=None,
                         activation=None,
                         dtype=tf.float32)
+                    seq_length = tf.reduce_sum(input_mask, axis=-1)
                     bilstm_output, bilstm_output_states = tf.nn.bidirectional_dynamic_rnn(
                         cell_fw=fw_cell,
                         cell_bw=bw_cell,
                         inputs=pre_output,
-                        sequence_length=config.max_seq_length,
+                        sequence_length=seq_length,
                         initial_state_fw=None,
                         initial_state_bw=None,
                         dtype=tf.float32)
-                    pre_output = bilstm_output
+                    pre_output = tf.concat(bilstm_output, axis=-1)
 
             with tf.variable_scope("kw_attn"):
                 query_layer = tf.layers.dense(
@@ -57,7 +55,9 @@ class BilstmAttnModel(object):
                 mask_adder = (1.0 - tf.cast(attention_mask, tf.float32)) * -10000.0
                 attention_scores += mask_adder
                 attention_probs = tf.nn.softmax(attention_scores)
-                context_layer = tf.math.multiply(tf.reshape(attention_probs, [batch_size, seq_length, 1]), value_layer)
+                shape_list = get_shape_list(value_layer)
+                batch_size = shape_list[0]
+                context_layer = tf.math.multiply(tf.reshape(attention_probs, [batch_size, config.max_seq_length, 1]), value_layer)
                 # return context_layer, attention_probs
                 self.sequence_output = context_layer
                 self.keyword_probs = attention_probs
@@ -67,6 +67,9 @@ class BilstmAttnModel(object):
 
     def get_keyword_probs(self):
         return self.keyword_probs
+
+    def get_sentence_output(self):
+        pass
 
 
 def embedding_lookup(input_ids,

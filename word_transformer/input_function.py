@@ -4,11 +4,17 @@ import tokenization
 from data_struct import InputFeatures
 
 
-def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type="train"):
-    tokens_a = tokenizer.tokenize(example.text_a)
+def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type="train", do_token=False):
+    if do_token == True:
+        tokens_a = tokenizer.tokenize(example.text_a)
+    else:
+        tokens_a = example.text_a.split(' ')
     tokens_b = None
     if example.text_b:
-        tokens_b = tokenizer.tokenize(example.text_b)
+        if do_token == True:
+            tokens_b = tokenizer.tokenize(example.text_b)
+        else:
+            tokens_b = example.text_b.split(' ')
 
     if len(tokens_a) > max_seq_length:
         tokens_a = tokens_a[0:max_seq_length]
@@ -58,7 +64,8 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
         )
     return feature
 
-def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer, output_file, set_type="train", label_type="int", single_text=False):
+def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer, output_file, 
+                                            set_type="train", label_type="int", single_text=False, do_token=True):
     writer = tf.python_io.TFRecordWriter(output_file)
     error_count = 0
 
@@ -66,7 +73,7 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
         if ex_index % 10000 == 0:
             tf.logging.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        feature = convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type)
+        feature = convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type, do_token=do_token)
         if "" == feature:
             error_count += 1
             continue

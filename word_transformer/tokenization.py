@@ -47,22 +47,18 @@ def printable_text(text):
         raise ValueError("Not running on Python2 or Python3")
 
 
-def load_vocab(word_vocab_file, skip_head=True):
+def load_vocab(word_vocab_file):
     vocab = collections.OrderedDict()
     index = 0
-
-    skip_head = True
     with tf.gfile.GFile(word_vocab_file, "r") as reader:
         while True:
             token = convert_to_unicode(reader.readline())
             if not token:
                 break
-            if skip_head:
-                skip_head = False
-                continue
             token = token.rstrip('\n').split(' ')[0]
             if token in vocab:
                 tf.logging.error("duplicate token:#%s#"%(token))
+                raise ValueError("vocab has duplicate token")
             vocab[token] = index
             index += 1
     tf.logging.info("vocab max index:%d"%(index-1))
@@ -106,12 +102,15 @@ class Tokenizer(object):
         self.use_pos = use_pos
         self.pos_dict = set(["nr","n","ns","nt","nz"])
 
-    def tokenize(self,text):
+    def tokenize(self,text,use_unknown=False):
         split_tokens = []
         text = text.strip()
         if self.use_pos == False:
             words = jieba.cut(text)
-            words = [w for w in words]
+            if use_unknown == True:
+                words = [w if w in self.vocab else "[unknown]" for w in words]
+            else:
+                words = [w for w in words]
             pos_list = [1]*len(words)
         else:
             words_pos = pseg.cut(text)
@@ -145,6 +144,8 @@ class Tokenizer(object):
                 output.append(self.vocab[item])
                 if self.use_pos == True:
                     pos_mask.append(pos[idx])
+            else:
+                output.append(self.vocab["[unknown]"])
 
         if self.use_pos == False:
             return output

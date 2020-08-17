@@ -5,6 +5,7 @@ import math
 import numpy as np
 import collections
 from models import BertModel
+from models import BilstmAttnModel
 from models.bert_transformer import get_shape_list
 from models.bert_transformer import create_initializer
 from models.bert_transformer import create_attention_mask_from_input_mask
@@ -22,6 +23,7 @@ import tokenization
 flags = tf.flags
 FLAGS = flags.FLAGS
 
+flags.DEFINE_string("model_name", "bert", "model name")
 flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
 flags.DEFINE_string("vocab_file", None, "vocab_file path")
@@ -36,6 +38,7 @@ flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence le
 flags.DEFINE_integer("batch_size", 32, "Total batch size.")
 flags.DEFINE_string("task_type", "classify", "task type name, classify or regression")
 
+flags.DEFINE_bool("do_token", True, "Whether to do tokenize work.")
 flags.DEFINE_bool("do_train", False, "Whether to run training.")
 flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
 flags.DEFINE_bool("do_predict", False, "Whether to run predict on the test set.")
@@ -160,9 +163,9 @@ def create_kwextraction_model(config,
                               query_act=None,
                               key_act=None,
                               scope="title_kw",
-                              model_type="bert"):
+                              model_name="bert"):
     with tf.variable_scope(scope, reuse=tf.compat.v1.AUTO_REUSE):
-        if model_type == "bert":
+        if model_name == "bert":
             encode_model = BertModel(config=config,
                                     is_training=is_training,
                                     input_ids=input_ids,
@@ -172,25 +175,35 @@ def create_kwextraction_model(config,
 
             sequence_output = encode_model.get_sequence_output()
             # attention_probs : [batch_size, seq_length]
-            pooling_output, attention_probs = word_attention_layer(input_tensor=sequence_output,
+            pooling_output, keyword_probs = word_attention_layer(input_tensor=sequence_output,
                                                                 input_mask=input_mask,
                                                                 hidden_size=hidden_size,
                                                                 query_act=query_act,
                                                                 key_act=key_act)
-        elif model_type == "bilstm":
-            pass
+        elif model_name == "bilstm":
+            encode_model = BilstmAttnModel(config=config,
+                                          is_training=is_training,
+                                          input_ids=input_ids,
+                                          input_mask=input_mask,
+                                          embedding_table=embedding_table)
+            sequence_output = encode_model.get_sequence_output()
+            pooling_output =  tf.reduce_mean(sequence_output, axis=-1)
+            keyword_probs = encode_model.get_keyword_probs()
         else:
             raise ValueError("model type error")
-        return pooling_output, attention_probs
+        return pooling_output, keyword_probs
 
 
 def model_fn_builder(config,
                      learning_rate=1e-5,
                      task="classify",
                      init_checkpoint=None,
+                     num_train_steps=None,
+                     num_warmup_steps=None,
                      embedding_table_value=None,
                      embedding_table_trainable=False,
-                     classify_num=2):
+                     classify_num=2,
+                     model_name="bert"):
     """
     :param task: "classify" or "regression"
     :return:
@@ -227,7 +240,8 @@ def model_fn_builder(config,
                                                                         hidden_size=config.hidden_size,
                                                                         query_act=get_activation(config.query_act),
                                                                         key_act=config.key_act,
-                                                                        scope="title_kw")
+                                                                        scope="text_kw",
+                                                                        model_name=model_name)
 
         if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
             sen_b_output, sen_b_attention_probs = create_kwextraction_model(input_ids=input_ids_b,
@@ -238,7 +252,8 @@ def model_fn_builder(config,
                                                                             hidden_size=config.hidden_size,
                                                                             query_act=get_activation(config.query_act),
                                                                             key_act=config.key_act,
-                                                                            scope="context_kw")
+                                                                            scope="text_kw",
+                                                                            model_name=model_name)
 
             total_loss = None
             with tf.variable_scope("sen_pair_loss"):
@@ -370,8 +385,11 @@ def main(_):
                                 learning_rate=1e-5,
                                 task=FLAGS.task_type,
                                 init_checkpoint=FLAGS.init_checkpoint,
+                                num_train_steps=num_train_steps,
+                                num_warmup_steps=num_warmup_steps,
                                 embedding_table_value=None,
-                                embedding_table_trainable=False)
+                                embedding_table_trainable=False,
+                                model_name=FLAGS.model_name)
 
 
     params = {"batch_size":FLAGS.batch_size}
@@ -388,7 +406,7 @@ def main(_):
             train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         if not os.path.exists(train_file):
             file_based_convert_examples_to_features(
-                train_examples, FLAGS.max_seq_length, tokenizer, train_file)
+                train_examples, FLAGS.max_seq_length, tokenizer, train_file, do_token=FLAGS.do_token)
         tf.logging.info("***** Running training *****")
         tf.logging.info("  Num examples = %d", len(train_examples))
         tf.logging.info("  Batch size = %d", FLAGS.batch_size)
@@ -487,6 +505,7 @@ if __name__ == "__main__":
     flags.mark_flag_as_required("config_file")
     flags.mark_flag_as_required("output_dir")
     flags.mark_flag_as_required("vocab_file")
+    flags.mark_flag_as_required("do_token")
     tf.app.run()
 
 

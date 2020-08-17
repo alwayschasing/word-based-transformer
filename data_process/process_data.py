@@ -5,7 +5,7 @@ import jieba
 import random
 import csv
 import logging
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(messgae)s", datefmt="%Y-%m-%d_%H:%M:%S")
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(message)s", datefmt="%Y-%m-%d_%H:%M:%S")
 
 
 def load_vocab_dict(vocab_file):
