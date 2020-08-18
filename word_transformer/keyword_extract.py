@@ -6,6 +6,7 @@ import numpy as np
 import collections
 from models import BertModel
 from models import BilstmAttnModel
+from models import BilstmModel
 from models.bert_transformer import get_shape_list
 from models.bert_transformer import create_initializer
 from models.bert_transformer import create_attention_mask_from_input_mask
@@ -189,8 +190,17 @@ def create_kwextraction_model(config,
             sequence_output = encode_model.get_sequence_output()
             pooling_output =  tf.reduce_mean(sequence_output, axis=-1)
             keyword_probs = encode_model.get_keyword_probs()
+        elif model_name == "test":
+            encode_model = BilstmModel(config,
+                                       is_training=is_training,
+                                       input_ids=input_ids,
+                                       input_mask=input_mask,
+                                       embedding_table=embedding_table)
+            pooling_output = encode_model.get_text_encoding()
+            keyword_probs = None
         else:
             raise ValueError("model type error")
+
         return pooling_output, keyword_probs
 
 
@@ -212,7 +222,8 @@ def model_fn_builder(config,
         tf.logging.info("*** Features ***")
         for name in sorted(features.keys()):
             tf.logging.info("  name = %s, shape = %s" % (name, features[name].shape))
-
+        
+        guid = features["guid"]
         input_ids_a = features["input_ids_a"]
         input_mask_a = features["input_mask_a"]
         if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
@@ -220,9 +231,10 @@ def model_fn_builder(config,
             input_mask_b = features["input_mask_b"]
             labels = features["labels"]
 
-        embedding_table = tf.get_variable("embedding_table",
-                                          shape=[config.vocab_size, config.embedding_size],
-                                          trainable=embedding_table_trainable)
+        with tf.variable_scope("embedding_table", reuse=tf.compat.v1.AUTO_REUSE):
+            embedding_table = tf.get_variable("embedding_table",
+                                            shape=[config.vocab_size, config.embedding_size],
+                                            trainable=embedding_table_trainable)
 
         def init_embedding_table(scoffold, sess):
             sess.run(embedding_table.initializer, {embedding_table.initial_value: embedding_table_value})
@@ -297,7 +309,14 @@ def model_fn_builder(config,
                 #total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
             optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
             train_op = optimizer.minimize(total_loss, global_step=tf.train.get_global_step())
-            log_hook = tf.train.LoggingTensorHook({"total_loss": total_loss}, every_n_iter=10)
+            log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss, 
+                                                   "guid": guid,
+                                                   "input_ids_a": input_ids_a, 
+                                                   "input_mask_a": input_mask_a,
+                                                   "input_mask_num": tf.reduce_sum(input_mask_a, axis=-1),
+                                                   "input_ids_b": input_ids_b,
+                                                   "input_mask_b": input_mask_b,
+                                                   "input_mask_num": tf.reduce_sum(input_mask_b, axis=-1)}, every_n_iter=10)
             output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                      loss=total_loss,
                                                      train_op=train_op,
@@ -352,8 +371,8 @@ def load_embedding_table(embedding_file, vocab_file):
 
 
 def main(_):
-    tf.logging.set_verbosity(tf.logging.INFO)
-    #tf.logging.set_verbosity(tf.logging.DEBUG)
+    #tf.logging.set_verbosity(tf.logging.INFO)
+    tf.logging.set_verbosity(tf.logging.DEBUG)
     os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id
     processor = SenpairProcessor()
 
@@ -388,7 +407,7 @@ def main(_):
                                 init_checkpoint=FLAGS.init_checkpoint,
                                 num_train_steps=num_train_steps,
                                 num_warmup_steps=num_warmup_steps,
-                                embedding_table_value=None,
+                                embedding_table_value=embedding_table,
                                 embedding_table_trainable=False,
                                 model_name=FLAGS.model_name)
 
@@ -416,7 +435,7 @@ def main(_):
         train_input_fn = file_based_input_fn_builder(
             input_file=train_file,
             seq_length=FLAGS.max_seq_length,
-            is_training=True
+            is_training=True,
         )
 
         estimator.train(input_fn=train_input_fn,

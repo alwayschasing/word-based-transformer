@@ -56,7 +56,7 @@ flags.DEFINE_integer("num_train_steps", 10, "num_train_steps")
 def gather_indexes(sequence_tensor,positions):
     """Gathers the vectors at the specific positions over a minibatch."""
     sequence_shape = get_shape_list(sequence_tensor, expected_rank=3)
-    batch_size = sequence_shape[0]
+    batch_size = tf.cast(sequence_shape[0], dtype=tf.int64)
     seq_length = sequence_shape[1]
     hidden_size = sequence_shape[2]
 
@@ -83,15 +83,11 @@ def word_attention_layer(input_tensor,
         input_mask: int Tensor of shape [batch_size, seq_length]
         hidden_size
     """
-    def transpose_for_scores(input_tensor, batch_size, num_attention_heads, seq_length, width):
-        output_tensor = tf.reshape(input_tensor,
-                                   [batch_size, seq_length, num_attention_heads, width])
-        output_tensor = tf.transpose(output_tensor, [0, 2, 1, 3])
-        return output_tensor
 
     shape_list = get_shape_list(input_tensor, expected_rank=[2, 3])
     batch_size = shape_list[0]
     seq_length = shape_list[1]
+    tf.logging.debug("[check_wordattn] %s" % (str(shape_list)))
 
     query_layer = tf.layers.dense(
         inputs=input_tensor,
@@ -100,9 +96,7 @@ def word_attention_layer(input_tensor,
         name="query",
         kernel_initializer=create_initializer(initializer_range)
     )
-
     value_layer = input_tensor
-
     query_shape_list = get_shape_list(query_layer, expected_rank=3)
     tf.logging.debug("query_layer shape: %s" % (str(query_shape_list)))
     # query shape [batch_size, seq_length, hidden_size]
@@ -114,21 +108,17 @@ def word_attention_layer(input_tensor,
         name="attn_weights",
         kernel_initializer=create_initializer(initializer_range)
     )
-    weights = tf.get_variable(name="attn_weights", shape=[hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
-    attention_scores = tf.tensordot(query_layer, weights, axes=1)
-    # attention_scores = tf.multiply(attention_scores, 1.0 / math.sqrt(float(hidden_size)))
-    # attention_mask shape: [batch_size, seq_length, seq_length]
-    #attention_mask = create_attention_mask_from_input_mask(input_tensor, input_mask)
-    # expand for multi heads, [batch_size, 1, seq_length, seq_length]
-    #attention_mask = tf.expand_dims(attention_mask, axis=[1])
+    #weights = tf.get_variable(name="attn_weights", shape=[hidden_size], initializer=tf.random_normal_initializer(stddev=0.1))
+    #attention_scores = tf.tensordot(query_layer, weights, axes=1)
+    attention_scores = tf.reshape(attention_scores, [batch_size, seq_length])
     attention_mask = input_mask
     mask_adder = (1.0 - tf.cast(attention_mask, tf.float32)) * -10000.0
     # attention_score: [batch_size, num_heads, seq_length, seq_length]
     attention_scores += mask_adder
-
     # attention_probs shape: [batch_size, seq_length]
     attention_probs = tf.nn.softmax(attention_scores)
-    context_layer = tf.reduce_mean(tf.math.multiply(tf.reshape(attention_probs, [batch_size, seq_length, 1]), value_layer), axis=1)
+    context_layer = tf.reduce_sum(tf.math.multiply(tf.reshape(attention_probs, [batch_size, seq_length, 1]), value_layer), axis=1)
+    context_layer = context_layer/tf.reduce_sum(tf.cast(input_mask, dtype=tf.float32), axis=-1, keepdims=True)
     return context_layer, attention_probs
 
 def get_pred_label_output(config,input_tensor,label=None,is_training=False):
@@ -171,11 +161,12 @@ def build_negative_sample_weights(input_tensor,label_ids,weights,sample_scope,ne
 
 
 def get_masked_lm_output(config, input_tensor, word_weights, positions,
-                         label_ids, label_weights, num_heads, rng):
+                         label_ids, label_weights, rng):
     batch_size = tf.shape(input_tensor)[0]
     position_size = tf.shape(label_weights)[1]
 
     input_tensor = gather_indexes(input_tensor, positions)
+    tf.logging.debug("[check2]input_tensor:%s" % (str(input_tensor.shape.as_list())))
     with tf.variable_scope("lm_predictions"):
         with tf.variable_scope("lm_out_layer"):
             input_tensor = tf.layers.dense(
@@ -195,13 +186,12 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
             # reshape label_ids from [batch_size,position_size] to [batch_size*position_size]
             label_ids = tf.reshape(label_ids, [-1, 1])
             # negative shape [batch_size*position_size, 1 + neg_sample_num, hidden_size]
-            negative_sample_weights = build_negative_sample_weights(input_tensor, label_ids, word_weights, config.vocab_size, neg_sample_num, rng, num_heads)
+            negative_sample_weights = build_negative_sample_weights(input_tensor, label_ids, word_weights, config.vocab_size, neg_sample_num, rng)
             negative_sample_bias = build_negative_sample_weights(input_tensor,label_ids, word_bias,config.vocab_size,neg_sample_num,rng)
 
             input_tensor = tf.expand_dims(input_tensor, axis=1)
             # change input_tensor shape to: [batch_size*position_size,1,hidden_size],
             # in order to get logits as shape [batch_size*position_size, 1, 1 + neg_sample_num]
-            input_tensor = tf.expand_dims(input_tensor, axis=1)
 
             # reshape negative_sample_weights, res: [batch_size*position_size, hidden_size, 1 + neg_sample_num]
             negative_sample_weights = tf.transpose(negative_sample_weights, perm=[0, 2, 1])
@@ -209,10 +199,13 @@ def get_masked_lm_output(config, input_tensor, word_weights, positions,
             # input_tensor:[batch_size*position_size , 1, hidden_size]
             # negative_sample_weights:[batch_size*position_size, hidden_size, 1 + neg_sample_num]
             # logits: [batch_size, position_size, 1 + neg_sample_num]
+            tf.logging.debug("[check1]input_tensor:%s, negative_sample_weights:%s" % 
+                             (str(input_tensor.shape.as_list()), str(negative_sample_weights.shape.as_list())))
             logits = tf.matmul(input_tensor, negative_sample_weights)
             # reshape to [batch_size*position_size, 1 + neg_sample_ids]
             logits = tf.reshape(logits, [-1,1+neg_sample_num])
             tf.logging.debug("logits shape:%s",str(logits.shape.as_list()))
+            tf.logging.debug("negative_smaple_bias:%s", str(negative_sample_bias.shape.as_list()))
             logits = tf.add(logits, negative_sample_bias)
 
             neg_label = tf.zeros(
@@ -271,10 +264,11 @@ def create_pretraining_model(config,
             sequence_output = encode_model.get_sequence_output()
             # attention_probs : [batch_size, seq_length]
             pooling_output, keyword_probs = word_attention_layer(input_tensor=sequence_output,
-                                                                input_mask=input_mask,
-                                                                hidden_size=hidden_size,
-                                                                query_act=query_act,
-                                                                key_act=key_act)
+                                                                 input_mask=input_mask,
+                                                                 hidden_size=hidden_size,
+                                                                 query_act=query_act,
+                                                                 key_act=key_act)
+            # pooling_output =  tf.reduce_mean(sequence_output, axis=-1)
 
         elif model_name == "bilstm":
             encode_model = BilstmAttnModel(config=config,
@@ -337,7 +331,7 @@ def model_fn_builder(config,
             scaffold = tf.train.Scaffold(init_fn=init_embedding_table)
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
-        sen_a_output, sen_a_attention_probs = create_pretraining_model(input_ids=input_ids_a,
+        seq_a_output, sen_a_output, sen_a_attention_probs = create_pretraining_model(input_ids=input_ids_a,
                                                                       input_mask=input_mask_a,
                                                                       config=config,
                                                                       is_training=is_training,
@@ -349,7 +343,7 @@ def model_fn_builder(config,
                                                                       model_name=model_name)
 
         if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
-            sen_b_output, sen_b_attention_probs = create_pretraining_model(input_ids=input_ids_b,
+            seq_b_output, sen_b_output, sen_b_attention_probs = create_pretraining_model(input_ids=input_ids_b,
                                                                            input_mask=input_mask_b,
                                                                            config=config,
                                                                            is_training=is_training,
@@ -361,21 +355,22 @@ def model_fn_builder(config,
                                                                            model_name=model_name)
 
             total_loss = 0
-            with tf.variable_scope("mask_lm_loss"):
+            with tf.variable_scope("mask_lm_loss", reuse=tf.compat.v1.AUTO_REUSE):
                 rng = random.Random(time.time())
                 (masked_lm_loss_a, masked_lm_example_loss_a) = get_masked_lm_output(
-                    config, sen_a_output, embedding_weights, masked_lm_positions_a,
+                    config, seq_a_output, embedding_weights, masked_lm_positions_a,
                     masked_lm_ids_a, masked_lm_weights_a, rng)
 
                 (masked_lm_loss_b, masked_lm_example_loss_b) = get_masked_lm_output(
-                    config, sen_b_output, embedding_weights, masked_lm_positions_b,
+                    config, seq_b_output, embedding_weights, masked_lm_positions_b,
                     masked_lm_ids_b, masked_lm_weights_b, rng)
 
             with tf.variable_scope("sen_pair_loss"):
                 if task == "classify":
                     with tf.variable_scope("classify_loss"):
                         concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
-                        logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
+                        fc_output = tf.layers.dense(concat_vector, config.hidden_size, activation=tf.tanh, kernel_initializer=create_initializer(0.1))
+                        logits = tf.layers.dense(fc_output, classify_num, activation=tf.tanh, kernel_initializer=None)
                         probabilities = tf.nn.softmax(logits)
                         labels = tf.cast(labels, tf.int32)
                         classify_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
@@ -415,11 +410,20 @@ def model_fn_builder(config,
         if mode == tf.estimator.ModeKeys.TRAIN:
             train_op = optimization.create_optimizer(
                 total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
-            log_hook = tf.train.LoggingTensorHook({"total_loss": total_loss}, every_n_iter=10)
+            log_hook = tf.train.LoggingTensorHook({"total_loss": total_loss, "part_loss": classify_loss}, every_n_iter=10)
+            tf.summary.scalar("part_loss", classify_loss)
+            tf.summary.scalar("masked_lm_loss_a", masked_lm_loss_a)
+            tf.summary.scalar("masked_lm_loss_b", masked_lm_loss_b)
+            summary_hook = tf.train.SummarySaverHook(
+                save_steps=10,
+                output_dir=FLAGS.output_dir,
+                summary_writer=None,
+                summary_op=tf.summary.merge_all()
+            )
             output_spec = tf.estimator.EstimatorSpec(mode = mode,
                                                      loss=total_loss,
                                                      train_op=train_op,
-                                                     training_hooks=[log_hook],
+                                                     training_hooks=[log_hook, summary_hook],
                                                      scaffold=scaffold)
         elif mode == tf.estimator.ModeKeys.EVAL:
             if task == "classify":
@@ -458,8 +462,6 @@ def load_embedding_table(embedding_file, vocab_file):
     with open(embedding_file, "r", encoding="utf-8") as fp:
         lines = fp.readlines()
         for idx, line in enumerate(lines):
-            if idx == 0:
-                continue
             parts = line.strip().split(' ')
             word = parts[0]
             vec = parts[1:]
@@ -472,8 +474,8 @@ def load_embedding_table(embedding_file, vocab_file):
 
 
 def main(_):
-    tf.logging.set_verbosity(tf.logging.INFO)
-    #tf.logging.set_verbosity(tf.logging.DEBUG)
+    #tf.logging.set_verbosity(tf.logging.INFO)
+    tf.logging.set_verbosity(tf.logging.DEBUG)
     os.environ["CUDA_VISIBLE_DEVICES"] = FLAGS.gpu_id
 
     if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:

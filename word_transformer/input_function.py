@@ -52,6 +52,7 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
 
     if tokens_b is not None:
         feature = InputFeatures(
+            guid=example.guid,
             input_ids_a=input_ids_a,
             input_mask_a=input_mask_a,
             input_ids_b=input_ids_b,
@@ -60,6 +61,7 @@ def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_typ
         )
     else:
         feature = InputFeatures(
+            guid=example.guid,
             input_ids_a=input_ids_a,
             input_mask_a=input_mask_a,
             label=example.label
@@ -76,6 +78,7 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
             tf.logging.info("Writing example %d of %d" % (ex_index, len(examples)))
 
         feature = convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type, do_token=do_token)
+        tf.logging.debug("guid:%d, input_ids_a:%s, input_ids_b:%s" % (feature.guid, feature.input_ids_a, feature.input_ids_b))
         if "" == feature:
             error_count += 1
             continue
@@ -89,6 +92,7 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
             return feat
 
         features = collections.OrderedDict()
+        features["guid"] = create_int_feature([feature.guid])
         features["input_ids_a"] = create_int_feature(feature.input_ids_a)
         features["input_mask_a"] = create_int_feature(feature.input_mask_a)
 
@@ -100,7 +104,6 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
             features["labels"] = create_int_feature([int(feature.label)])
         else:
             features["labels"] = create_float_feature([float(feature.label)])
-
         tf_example = tf.train.Example(features=tf.train.Features(feature=features))
         writer.write(tf_example.SerializeToString())
     tf.logging.info("based_convert_error_case:%d" % (error_count))
@@ -110,6 +113,7 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
 def file_based_input_fn_builder(input_file, seq_length, is_training, single_text=False):
     if single_text == False:
         name_to_features = {
+            "guid": tf.FixedLenFeature([], tf.int64),
             "input_ids_a": tf.FixedLenFeature([seq_length], tf.int64),
             "input_mask_a": tf.FixedLenFeature([seq_length], tf.int64),
             "input_ids_b": tf.FixedLenFeature([seq_length], tf.int64),
@@ -118,6 +122,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training, single_text
         }
     else:
         name_to_features = {
+            "guid": tf.FixedLenFeature([], tf.int64),
             "input_ids_a": tf.FixedLenFeature([seq_length], tf.int64),
             "input_mask_a": tf.FixedLenFeature([seq_length], tf.int64),
             "labels": tf.FixedLenFeature([], tf.int64)
@@ -168,6 +173,7 @@ def pretrain_input_fn_builder(input_file, seq_length, mask_num, is_training, sin
 
         d = d.map(lambda record: _decode_record(record, name_to_features))
         d = d.batch(batch_size=batch_size, drop_remainder=False)
+        tf.logging.debug("[check dataset] %s" % (d.element_spec))
         return d
     return input_fn
 

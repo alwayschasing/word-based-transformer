@@ -4,7 +4,7 @@ from .util import create_initializer
 from .util import assert_rank
 
 
-class BilstmAttnModel(object):
+class BilstmModel(object):
     def __init__(self, config, is_training, input_ids, input_mask, embedding_table=None, scope="bilstm_attn"):
         with tf.variable_scope(scope):
             with tf.variable_scope("embeddings"):
@@ -38,29 +38,11 @@ class BilstmAttnModel(object):
                         initial_state_bw=None,
                         dtype=tf.float32)
                     pre_output = tf.concat(bilstm_output, axis=-1)
+                
+            context_output = pre_output[-1]
 
-            with tf.variable_scope("kw_attn"):
-                query_layer = tf.layers.dense(
-                    inputs=pre_output,
-                    units=config.hidden_size,
-                    activation=config.query_act,
-                    kernel_initializer=create_initializer(config.initializer_range),
-                    name="attn_query")
-                value_layer = pre_output
-
-                weights = tf.get_variable(name="attn_weights", shape=[config.hidden_size],
-                                          initializer=tf.random_normal_initializer(stddev=0.1))
-                attention_scores = tf.tensordot(query_layer, weights, axes=1)
-                attention_mask = input_mask
-                mask_adder = (1.0 - tf.cast(attention_mask, tf.float32)) * -10000.0
-                attention_scores += mask_adder
-                attention_probs = tf.nn.softmax(attention_scores)
-                shape_list = get_shape_list(value_layer)
-                batch_size = shape_list[0]
-                context_layer = tf.math.multiply(tf.reshape(attention_probs, [batch_size, config.max_seq_length, 1]), value_layer)
-                # return context_layer, attention_probs
-                self.sequence_output = context_layer
-                self.keyword_probs = attention_probs
+            final_output = tf.layers.dense(context_output, config.hidden_size, activation=tf.tanh)
+            self.text_encoding = final_output
 
     def get_sequence_output(self):
         return self.sequence_output
@@ -68,8 +50,8 @@ class BilstmAttnModel(object):
     def get_keyword_probs(self):
         return self.keyword_probs
 
-    def get_sentence_output(self):
-        pass
+    def get_text_encoding(self):
+        return self.text_encoding
 
 
 def embedding_lookup(input_ids,

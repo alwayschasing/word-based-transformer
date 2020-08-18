@@ -9,14 +9,14 @@ vocab_file="/search/odin/liruihong/word-based-transformer/config_data/final_voca
 #input_file="/search/odin/liruihong/word-based-transformer/data/train_data_1000k.tsv"
 #input_file="/search/odin/liruihong/word-based-transformer/data/dev_data_100k.tsv"
 #cached_train_data="/search/odin/liruihong/word-based-transformer/cached_data/pretrain_data_1000k.tfrecord"
-input_file="/search/odin/liruihong/word-based-transformer/cached_data/pretrain_data_1000k.tfrecord"
+input_file="/search/odin/liruihong/word-based-transformer/data/pretrain_data/pretrain_1000k.tfrecord"
 cached_dev_data="/search/odin/liruihong/word-based-transformer/cached_data/dev_data_100k.tfrecord"
 output_dir="/search/odin/liruihong/word-based-transformer/model_output/pretrain_bertattn_clssify"
 embedding_table="/search/odin/liruihong/word-based-transformer/config_data/final_vocab_embedding.txt"
 eval_model=""
 
 python pretraining.py \
-    --gpu_id="6" \
+    --gpu_id="3" \
     --model_name="bert" \
     --task_type="classify" \
     --config_file=$config_file \
@@ -25,11 +25,12 @@ python pretraining.py \
     --input_file=$input_file \
     --cached_tfrecord=$cached_train_data \
     --embedding_table_trainable=True \
+    --embedding_table=$embedding_table \
     --max_seq_length=256 \
     --mask_num=25 \
-    --save_checkpoint_steps=20000 \
+    --save_checkpoint_steps=10000 \
     --do_train=True \
     --do_eval=False \
     --batch_size=64 \
     --num_warmup_steps=1000 \
-    --num_train_steps=50000
+    --num_train_steps=60000

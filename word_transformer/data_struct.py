@@ -13,11 +13,13 @@ class InputExample(object):
 
 class InputFeatures(object):
     def __init__(self,
+                 guid,
                  input_ids_a,
                  input_mask_a,
                  input_ids_b=None,
                  input_mask_b=None,
                  label=None):
+        self.guid = guid
         self.input_ids_a = input_ids_a
         self.input_mask_a = input_mask_a
         self.input_ids_b = input_ids_b
@@ -63,7 +65,7 @@ class SenpairProcessor(DataProcessor):
     def _create_examples(self, lines, set_type):
         examples = []
         for (i, line) in enumerate(lines):
-            guid = "%d" % (i)
+            guid = i
             text_a = tokenization.convert_to_unicode(line[0].strip())
             text_b = None
             if set_type == "test":
@@ -75,8 +77,8 @@ class SenpairProcessor(DataProcessor):
                     continue
                 text_b = tokenization.convert_to_unicode(line[1].strip())
                 label = tokenization.convert_to_unicode(line[2])
-                if text_b is None:
-                    raise ValueError("text_b None")
+                if text_b == "":
+                    raise ValueError("text_b null, guid:%d" % (guid))
                     
             examples.append(
                 InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
