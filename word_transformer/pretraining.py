@@ -370,11 +370,17 @@ def model_fn_builder(config,
                     with tf.variable_scope("classify_loss"):
                         concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
                         fc_output = tf.layers.dense(concat_vector, config.hidden_size, activation=tf.tanh, kernel_initializer=create_initializer(0.1))
-                        logits = tf.layers.dense(fc_output, classify_num, activation=tf.tanh, kernel_initializer=None)
-                        probabilities = tf.nn.softmax(logits)
-                        labels = tf.cast(labels, tf.int32)
-                        classify_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
-                                                                   logits=logits)
+                        #logits = tf.layers.dense(fc_output, classify_num, activation=tf.tanh, kernel_initializer=None)
+                        cls_weights = tf.get_variable("cls_weights", 
+                                                      shape=[config.hidden_size],
+                                                      initializer=create_initializer(0.1))
+                        logits = tf.tensordot(fc_output, cls_weights, axes=1)
+                        #probabilities = tf.nn.softmax(logits)
+                        #labels = tf.cast(labels, tf.int32)
+                        #classify_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
+                        probabilities = tf.math.sigmoid(logits)
+                        labels = tf.cast(labels, dtype=tf.float32)
+                        classify_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits))
                 elif task == "regression":
                     with tf.variable_scope("regression_loss"):
                         cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
@@ -501,7 +507,7 @@ def main(_):
         embedding_table = load_embedding_table(FLAGS.embedding_table, FLAGS.vocab_file)
 
     model_fn = model_fn_builder(config=config,
-                                learning_rate=1e-5,
+                                learning_rate=FLAGS.learning_rate,
                                 task=FLAGS.task_type,
                                 init_checkpoint=FLAGS.init_checkpoint,
                                 num_train_steps=num_train_steps,

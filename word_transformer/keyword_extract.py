@@ -3,6 +3,7 @@ import tensorflow as tf
 import os
 import math
 import numpy as np
+import random
 import collections
 from models import BertModel
 from models import BilstmAttnModel
@@ -24,6 +25,7 @@ import tokenization
 flags = tf.flags
 FLAGS = flags.FLAGS
 
+flags.DEFINE_integer("NEG", 50, "neg num")
 flags.DEFINE_string("model_name", "bert", "model name")
 flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
@@ -34,7 +36,7 @@ flags.DEFINE_bool("embedding_table_trainable", True, "embedding_table_trainable"
 flags.DEFINE_string("input_file", None, "input_file path")
 flags.DEFINE_string("cached_tfrecord", None, "cached tfrecord file path")
 flags.DEFINE_string("gpu_id", "0", "gpu_id str")
-flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
+flags.DEFINE_float("learning_rate", 0.001, "The initial learning rate for Adam.")
 flags.DEFINE_integer("max_seq_length", 128, "The maximum total input sequence length")
 flags.DEFINE_integer("batch_size", 32, "Total batch size.")
 flags.DEFINE_string("task_type", "classify", "task type name, classify or regression")
@@ -269,24 +271,47 @@ def model_fn_builder(config,
 
             total_loss = None
             with tf.variable_scope("sen_pair_loss"):
-                if task == "classify":
-                    with tf.variable_scope("classify_loss"):
-                        concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
-                        logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
-                        probabilities = tf.nn.softmax(logits)
-                        labels = tf.cast(labels, tf.int32)
-                        softmax_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
-                                                                   logits=logits)
-                        total_loss = softmax_loss
-                elif task == "regression":
-                    with tf.variable_scope("regression_loss"):
-                        cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
-                        cosine_val = cosine_similarity(sen_a_output, sen_b_output)
-                        cosine_val = tf.reshape(cosine_val, [-1])
-                        labels = tf.cast(labels, tf.float32)
-                        total_loss = tf.losses.mean_squared_error(labels, cosine_val)
-                else:
-                    raise ValueError("task name error")
+                query_encoder = sen_a_output
+                doc_encoder = sen_b_output
+                tmp = tf.tile(doc_encoder, [1, 1])
+                doc_encoder_fd = sen_a_output
+                for i in range(FLAGS.NEG):
+                    rand = random.randint(1, FLAGS.batch_size + i) % FLAGS.batch_size
+                    s1 = tf.slice(tmp, [rand, 0], [FLAGS.batch_size - rand, -1])
+                    s2 = tf.slice(tmp, [0, 0], [rand, -1])
+                    doc_encoder_fd = tf.concat([doc_encoder_fd, s1, s2], axis=0)
+                query_norm = tf.tile(tf.sqrt(tf.reduce_sum(tf.square(query_encoder), axis=1, keepdims=True)), [FLAGS.NEG + 1, 1])
+                doc_norm = tf.sqrt(tf.reduce_sum(tf.square(doc_encoder_fd), axis=1, keepdims=True))
+                query_encoder_fd = tf.tile(query_encoder, [FLAGS.NEG + 1, 1])
+                prod = tf.reduce_sum(tf.multiply(query_encoder_fd, doc_encoder_fd), axis=1, keepdims=True)
+                norm_prod = tf.multiply(query_norm, doc_norm)
+                cos_sim_raw = tf.truediv(prod, norm_prod)
+                cos_sim = tf.transpose(tf.reshape(tf.transpose(cos_sim_raw), [FLAGS.NEG + 1, -1])) * 20
+                
+                prob = tf.nn.softmax(cos_sim)
+                hit_prob = tf.slice(prob, [0, 0], [-1, 1])
+                loss = -tf.reduce_mean(tf.log(hit_prob))
+                correct_prediction = tf.cast(tf.equal(tf.argmax(prob, 1), 0), tf.float32)
+                accuracy = tf.reduce_mean(correct_prediction)
+                total_loss = loss
+                #if task == "classify":
+                #    with tf.variable_scope("classify_loss"):
+                #        concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
+                #        logits = tf.layers.dense(concat_vector, classify_num, kernel_initializer=None)
+                #        probabilities = tf.nn.softmax(logits)
+                #        labels = tf.cast(labels, tf.int32)
+                #        softmax_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
+                #                                                   logits=logits)
+                #        total_loss = softmax_loss
+                #elif task == "regression":
+                #    with tf.variable_scope("regression_loss"):
+                #        cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
+                #        cosine_val = cosine_similarity(sen_a_output, sen_b_output)
+                #        cosine_val = tf.reshape(cosine_val, [-1])
+                #        labels = tf.cast(labels, tf.float32)
+                #        total_loss = tf.losses.mean_squared_error(labels, cosine_val)
+                #else:
+                #    raise ValueError("task name error")
 
         tvars = tf.trainable_variables()
         initialized_variable_names = {}
@@ -307,16 +332,17 @@ def model_fn_builder(config,
         if mode == tf.estimator.ModeKeys.TRAIN:
             #train_op = optimization.create_optimizer(
                 #total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
-            optimizer = tf.train.AdamOptimizer(learning_rate=0.01)
+            optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
             train_op = optimizer.minimize(total_loss, global_step=tf.train.get_global_step())
-            log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss, 
-                                                   "guid": guid,
-                                                   "input_ids_a": input_ids_a, 
-                                                   "input_mask_a": input_mask_a,
-                                                   "input_mask_num": tf.reduce_sum(input_mask_a, axis=-1),
-                                                   "input_ids_b": input_ids_b,
-                                                   "input_mask_b": input_mask_b,
-                                                   "input_mask_num": tf.reduce_sum(input_mask_b, axis=-1)}, every_n_iter=10)
+            #log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss, 
+            #                                       "guid": guid,
+            #                                       "input_ids_a": input_ids_a, 
+            #                                       "input_mask_a": input_mask_a,
+            #                                       "input_mask_num": tf.reduce_sum(input_mask_a, axis=-1),
+            #                                       "input_ids_b": input_ids_b,
+            #                                       "input_mask_b": input_mask_b,
+            #                                       "input_mask_num": tf.reduce_sum(input_mask_b, axis=-1)}, every_n_iter=10)
+            log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss}, every_n_iter=10)
             output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                      loss=total_loss,
                                                      train_op=train_op,
@@ -402,7 +428,7 @@ def main(_):
         embedding_table = load_embedding_table(FLAGS.embedding_table, FLAGS.vocab_file)
 
     model_fn = model_fn_builder(config=config,
-                                learning_rate=1e-5,
+                                learning_rate=FLAGS.learning_rate,
                                 task=FLAGS.task_type,
                                 init_checkpoint=FLAGS.init_checkpoint,
                                 num_train_steps=num_train_steps,

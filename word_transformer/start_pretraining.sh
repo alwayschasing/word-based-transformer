@@ -11,7 +11,7 @@ vocab_file="/search/odin/liruihong/word-based-transformer/config_data/final_voca
 #cached_train_data="/search/odin/liruihong/word-based-transformer/cached_data/pretrain_data_1000k.tfrecord"
 input_file="/search/odin/liruihong/word-based-transformer/data/pretrain_data/pretrain_1000k.tfrecord"
 cached_dev_data="/search/odin/liruihong/word-based-transformer/cached_data/dev_data_100k.tfrecord"
-output_dir="/search/odin/liruihong/word-based-transformer/model_output/pretrain_bertattn_clssify"
+output_dir="/search/odin/liruihong/word-based-transformer/model_output/pretrain_bertattn_clssify_batch1024_lr0.01"
 embedding_table="/search/odin/liruihong/word-based-transformer/config_data/final_vocab_embedding.txt"
 eval_model=""
 
@@ -31,6 +31,7 @@ python pretraining.py \
     --save_checkpoint_steps=10000 \
     --do_train=True \
     --do_eval=False \
-    --batch_size=64 \
+    --batch_size=896 \
+    --learning_rate=0.01 \
     --num_warmup_steps=1000 \
-    --num_train_steps=60000
+    --num_train_steps=80000

@@ -107,6 +107,7 @@ class Tokenizer(object):
         text = text.strip()
         if self.use_pos == False:
             words = jieba.cut(text)
+            # words = text
             if use_unknown == True:
                 words = [w if w in self.vocab else "[unknown]" for w in words]
             else:
@@ -162,7 +163,7 @@ if __name__ == "__main__":
     tokenizer = Tokenizer(vocab_file, stop_words_file)
     test_file = "/search/odin/liruihong/article_data/article_test"
     res_file = "test_res"
-    # fp = open(test_file,"r", encoding="utf-8") 
+    # fp = open(test_file,"r", encoding="utf-8")
     fp = tf.gfile.GFile(test_file, "r")
     reader = csv.reader(fp, delimiter="\t", quotechar=None)
     wfp = open(res_file, "w", encoding="utf-8")
@@ -180,7 +181,7 @@ if __name__ == "__main__":
         line_words = tokenizer.tokenize(line)
         #print(line_words)
         res_line = "#".join(line_words) + "\n"
-        ids = tokenizer.convert_tokens_to_ids(line_words) 
+        ids = tokenizer.convert_tokens_to_ids(line_words)
         words = tokenizer.convert_ids_to_tokens(ids)
         ids = [str(id) for id in ids]
         ids_line = "#".join(ids) + "\n"

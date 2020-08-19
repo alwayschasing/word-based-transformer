@@ -71,12 +71,13 @@ class SenpairProcessor(DataProcessor):
             if set_type == "test":
                 label = 1
             else:
-                if len(line) != 3:
+                if len(line) < 2:
                     logging.error("[data error] line %d, %s, parts less 3" % (i, line))
-                    raise ValueError("data format error, parts less 3")
                     continue
+                    raise ValueError("data format error, parts less 3")
                 text_b = tokenization.convert_to_unicode(line[1].strip())
-                label = tokenization.convert_to_unicode(line[2])
+                #label = tokenization.convert_to_unicode(line[2])
+                label = 1
                 if text_b == "":
                     raise ValueError("text_b null, guid:%d" % (guid))
                     

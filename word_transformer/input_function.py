@@ -2,6 +2,7 @@ import tensorflow as tf
 import collections
 import tokenization
 from data_struct import InputFeatures
+from tqdm import tqdm
 
 
 def convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type="train", do_token=False):
@@ -73,12 +74,12 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
     writer = tf.python_io.TFRecordWriter(output_file)
     error_count = 0
 
-    for (ex_index, example) in enumerate(examples):
+    for (ex_index, example) in enumerate(tqdm(examples)):
         if ex_index % 10000 == 0:
             tf.logging.info("Writing example %d of %d" % (ex_index, len(examples)))
 
         feature = convert_single_example(ex_index, example, max_seq_length, tokenizer, set_type, do_token=do_token)
-        tf.logging.debug("guid:%d, input_ids_a:%s, input_ids_b:%s" % (feature.guid, feature.input_ids_a, feature.input_ids_b))
+        #tf.logging.debug("guid:%d, input_ids_a:%s, input_ids_b:%s" % (feature.guid, feature.input_ids_a, feature.input_ids_b))
         if "" == feature:
             error_count += 1
             continue
