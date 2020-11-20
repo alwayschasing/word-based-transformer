@@ -22,6 +22,7 @@ from models import layer_norm
 flags = tf.flags
 FLAGS = flags.FLAGS
 
+flags.DEFINE_integer("NEG", 50, "neg num")
 flags.DEFINE_string("model_name", "bert", "model name")
 flags.DEFINE_string("config_file", None, "config_file path")
 flags.DEFINE_string("output_dir", None, "output_dir path")
@@ -366,37 +367,61 @@ def model_fn_builder(config,
                     masked_lm_ids_b, masked_lm_weights_b, rng)
 
             with tf.variable_scope("sen_pair_loss"):
-                if task == "classify":
-                    with tf.variable_scope("classify_loss"):
-                        concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
-                        fc_output = tf.layers.dense(concat_vector, config.hidden_size, activation=tf.tanh, kernel_initializer=create_initializer(0.1))
-                        #logits = tf.layers.dense(fc_output, classify_num, activation=tf.tanh, kernel_initializer=None)
-                        cls_weights = tf.get_variable("cls_weights", 
-                                                      shape=[config.hidden_size],
-                                                      initializer=create_initializer(0.1))
-                        logits = tf.tensordot(fc_output, cls_weights, axes=1)
-                        #probabilities = tf.nn.softmax(logits)
-                        #labels = tf.cast(labels, tf.int32)
-                        #classify_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
-                        probabilities = tf.math.sigmoid(logits)
-                        labels = tf.cast(labels, dtype=tf.float32)
-                        classify_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits))
-                elif task == "regression":
-                    with tf.variable_scope("regression_loss"):
-                        cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
-                        cosine_val = cosine_similarity(sen_a_output, sen_b_output)
-                        cosine_val = tf.reshape(cosine_val, [-1])
-                        labels = tf.cast(labels, tf.float32)
-                        regression_loss= tf.losses.mean_squared_error(labels, cosine_val)
-                else:
-                    raise ValueError("task name error")
+                query_encoder = sen_a_output
+                doc_encoder = sen_b_output
+                tmp = tf.tile(doc_encoder, [1, 1])
+                doc_encoder_fd = sen_a_output
+                for i in range(FLAGS.NEG):
+                    rand = random.randint(1, FLAGS.batch_size + i) % FLAGS.batch_size
+                    s1 = tf.slice(tmp, [rand, 0], [FLAGS.batch_size - rand, -1])
+                    s2 = tf.slice(tmp, [0, 0], [rand, -1])
+                    doc_encoder_fd = tf.concat([doc_encoder_fd, s1, s2], axis=0)
+                query_norm = tf.tile(tf.sqrt(tf.reduce_sum(tf.square(query_encoder), axis=1, keepdims=True)), [FLAGS.NEG + 1, 1])
+                doc_norm = tf.sqrt(tf.reduce_sum(tf.square(doc_encoder_fd), axis=1, keepdims=True))
+                query_encoder_fd = tf.tile(query_encoder, [FLAGS.NEG + 1, 1])
+                prod = tf.reduce_sum(tf.multiply(query_encoder_fd, doc_encoder_fd), axis=1, keepdims=True)
+                norm_prod = tf.multiply(query_norm, doc_norm)
+                cos_sim_raw = tf.truediv(prod, norm_prod)
+                cos_sim = tf.transpose(tf.reshape(tf.transpose(cos_sim_raw), [FLAGS.NEG + 1, -1])) * 20
+                
+                prob = tf.nn.softmax(cos_sim)
+                hit_prob = tf.slice(prob, [0, 0], [-1, 1])
+                loss = -tf.reduce_mean(tf.log(hit_prob))
+                correct_prediction = tf.cast(tf.equal(tf.argmax(prob, 1), 0), tf.float32)
+                accuracy = tf.reduce_mean(correct_prediction)
+                sim_loss = loss
+                #if task == "classify":
+                #    with tf.variable_scope("classify_loss"):
+                #        concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
+                #        fc_output = tf.layers.dense(concat_vector, config.hidden_size, activation=tf.tanh, kernel_initializer=create_initializer(0.1))
+                #        #logits = tf.layers.dense(fc_output, classify_num, activation=tf.tanh, kernel_initializer=None)
+                #        cls_weights = tf.get_variable("cls_weights", 
+                #                                      shape=[config.hidden_size],
+                #                                      initializer=create_initializer(0.1))
+                #        logits = tf.tensordot(fc_output, cls_weights, axes=1)
+                #        #probabilities = tf.nn.softmax(logits)
+                #        #labels = tf.cast(labels, tf.int32)
+                #        #classify_loss = tf.losses.softmax_cross_entropy(onehot_labels=tf.one_hot(labels, depth=config.label_nums),
+                #        probabilities = tf.math.sigmoid(logits)
+                #        labels = tf.cast(labels, dtype=tf.float32)
+                #        classify_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=labels, logits=logits))
+                #elif task == "regression":
+                #    with tf.variable_scope("regression_loss"):
+                #        cosine_similarity = tf.keras.losses.CosineSimilarity(axis=1)
+                #        cosine_val = cosine_similarity(sen_a_output, sen_b_output)
+                #        cosine_val = tf.reshape(cosine_val, [-1])
+                #        labels = tf.cast(labels, tf.float32)
+                #        regression_loss= tf.losses.mean_squared_error(labels, cosine_val)
+                #else:
+                #    raise ValueError("task name error")
 
-            if task == "regression":
-                total_loss = masked_lm_loss_a + masked_lm_loss_b + regression_loss
-            elif task == "classify":
-                total_loss = masked_lm_loss_a + masked_lm_loss_b + classify_loss
-            else:
-                raise ValueError("task error, loss define error")
+            #if task == "regression":
+            #    total_loss = masked_lm_loss_a + masked_lm_loss_b + regression_loss
+            #elif task == "classify":
+            #    total_loss = masked_lm_loss_a + masked_lm_loss_b + classify_loss
+            #else:
+            #    raise ValueError("task error, loss define error")
+            total_loss = masked_lm_loss_a + masked_lm_loss_b + sim_loss
 
         tvars = tf.trainable_variables()
         initialized_variable_names = {}
@@ -416,8 +441,8 @@ def model_fn_builder(config,
         if mode == tf.estimator.ModeKeys.TRAIN:
             train_op = optimization.create_optimizer(
                 total_loss, learning_rate, num_train_steps, num_warmup_steps, use_tpu=False)
-            log_hook = tf.train.LoggingTensorHook({"total_loss": total_loss, "part_loss": classify_loss}, every_n_iter=10)
-            tf.summary.scalar("part_loss", classify_loss)
+            log_hook = tf.train.LoggingTensorHook({"total_loss": total_loss, "part_loss": sim_loss}, every_n_iter=10)
+            tf.summary.scalar("part_loss", sim_loss)
             tf.summary.scalar("masked_lm_loss_a", masked_lm_loss_a)
             tf.summary.scalar("masked_lm_loss_b", masked_lm_loss_b)
             summary_hook = tf.train.SummarySaverHook(

@@ -103,4 +103,4 @@ def run_train_data_generation():
 
 if __name__ == "__main__":
     #run_train_data_generation()
-    preprocess_cutword_file()
+    #preprocess_cutword_file()

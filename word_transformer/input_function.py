@@ -141,7 +141,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training, single_text
             d = d.shuffle(buffer_size=100)
 
         d = d.map(lambda record: _decode_record(record, name_to_features))
-        d = d.batch(batch_size=batch_size, drop_remainder=False)
+        d = d.batch(batch_size=batch_size, drop_remainder=True)
         return d
     return input_fn
 

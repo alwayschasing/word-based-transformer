@@ -45,6 +45,7 @@ flags.DEFINE_bool("do_token", True, "Whether to do tokenize work.")
 flags.DEFINE_bool("do_train", False, "Whether to run training.")
 flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
 flags.DEFINE_bool("do_predict", False, "Whether to run predict on the test set.")
+flags.DEFINE_bool("single_text", False, "whether has single text of one instance")
 
 flags.DEFINE_string("init_checkpoint", None, "Initial checkpoint")
 flags.DEFINE_string("pred_model",None,"")
@@ -209,6 +210,7 @@ def create_kwextraction_model(config,
 def model_fn_builder(config,
                      learning_rate=1e-5,
                      task="classify",
+                     single_text=False,
                      init_checkpoint=None,
                      num_train_steps=None,
                      num_warmup_steps=None,
@@ -228,7 +230,8 @@ def model_fn_builder(config,
         guid = features["guid"]
         input_ids_a = features["input_ids_a"]
         input_mask_a = features["input_mask_a"]
-        if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
+        #if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
+        if single_text == False:
             input_ids_b = features["input_ids_b"]
             input_mask_b = features["input_mask_b"]
             labels = features["labels"]
@@ -294,6 +297,21 @@ def model_fn_builder(config,
                 correct_prediction = tf.cast(tf.equal(tf.argmax(prob, 1), 0), tf.float32)
                 accuracy = tf.reduce_mean(correct_prediction)
                 total_loss = loss
+
+                if FLAGS.do_eval:
+                    sen_a_norm = tf.sqrt(tf.reduce_sum(tf.square(sen_a_output), axis=1))
+                    sen_b_norm = tf.sqrt(tf.reduce_sum(tf.square(sen_b_output), axis=1))
+                    dotres = tf.reduce_sum(tf.multiply(sen_a_output, sen_b_output), axis=1)
+                    tf.logging.debug("dot shape:%s" % (get_shape_list(dotres)))
+                    tf.logging.debug("norm_a shape:%s" % (get_shape_list(sen_a_norm)))
+                    tf.logging.debug("norm_b shape:%s" % (get_shape_list(sen_b_norm)))
+                    normres = tf.multiply(sen_a_norm, sen_b_norm)
+                    tf.logging.debug("norm shape:%s" % (get_shape_list(normres)))
+                    cosine_val = tf.truediv(dotres, normres)
+                    predictions = tf.sigmoid(cosine_val)
+                    tf.logging.debug("cosine_val shape:%s" % (get_shape_list(cosine_val)))
+                    #probabilities = tf.nn.softmax(cos_sim)
+                    #predictions = tf.argmax(probabilities, axis=1)
                 #if task == "classify":
                 #    with tf.variable_scope("classify_loss"):
                 #        concat_vector = tf.concat([sen_a_output, sen_b_output, tf.abs(sen_a_output-sen_b_output)], axis=1)
@@ -342,30 +360,53 @@ def model_fn_builder(config,
             #                                       "input_ids_b": input_ids_b,
             #                                       "input_mask_b": input_mask_b,
             #                                       "input_mask_num": tf.reduce_sum(input_mask_b, axis=-1)}, every_n_iter=10)
-            log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss}, every_n_iter=10)
+            log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss, "accuracy": accuracy}, every_n_iter=10)
             output_spec = tf.estimator.EstimatorSpec(mode=mode,
                                                      loss=total_loss,
                                                      train_op=train_op,
                                                      training_hooks=[log_hook],
                                                      scaffold=scaffold)
         elif mode == tf.estimator.ModeKeys.EVAL:
-            if task == "classify":
-                predictions = tf.argmax(probabilities, axis=1)
-                output_spec = tf.estimator.EstimatorSpec(mode=mode,
-                                                        loss=total_loss,
-                                                        eval_metric_ops={"accuracy": tf.metrics.accuracy(labels, predictions)},
-                                                        scaffold=scaffold)
-            elif task == "regression":
-                predictions = cosine_val
-                output_spec = tf.estimator.EstimatorSpec(mode=mode,
-                                                        loss=total_loss,
-                                                        eval_metric_ops={"auc": tf.metrics.auc(labels, cosine_val)},
-                                                        scaffold=scaffold)
-        else:
+            #if task == "classify":
+            #    predictions = tf.argmax(probabilities, axis=1)
+            #    output_spec = tf.estimator.EstimatorSpec(mode=mode,
+            #                                            loss=total_loss,
+            #                                            eval_metric_ops={"accuracy": tf.metrics.accuracy(labels, predictions)},
+            #                                            scaffold=scaffold)
+            #elif task == "regression":
+            #    predictions = cosine_val
+            #    output_spec = tf.estimator.EstimatorSpec(mode=mode,
+            #                                            loss=total_loss,
+            #                                            eval_metric_ops={"auc": tf.metrics.auc(labels, cosine_val)},
+            #                                            scaffold=scaffold)
+            log_hook = tf.train.LoggingTensorHook({"total_loss":  total_loss, "accuracy": accuracy}, every_n_iter=1)
             output_spec = tf.estimator.EstimatorSpec(mode=mode,
-                                                     predictions={"sen_embedding": sen_a_output,
-                                                                  "input_ids": input_ids_a,
-                                                                  "word_attention_probs": sen_a_attention_probs})
+                                                     loss=total_loss,
+                                                     evaluation_hooks=[log_hook],
+                                                     scaffold=scaffold)
+        else:
+            if single_text:
+                log_hook = tf.train.LoggingTensorHook({"guid": guid,
+                                                   "sen_a_embedding": sen_a_output,
+                                                   "keyword_probs_a": sen_a_attention_probs}, every_n_iter=1)
+                output_spec = tf.estimator.EstimatorSpec(mode=mode,
+                                                        predictions={"sen_a_embedding": sen_a_output,
+                                                                    "input_ids_a": input_ids_a,
+                                                                    "keyword_probs_a": sen_a_attention_probs})
+            else:
+                log_hook = tf.train.LoggingTensorHook({"guid": guid,
+                                                   "sen_a_embedding": sen_a_output,
+                                                   "sen_a_attentions": sen_a_attention_probs,
+                                                   "sen_b_embedding": sen_b_output,
+                                                   "sen_b_attentions": sen_b_attention_probs}, every_n_iter=1)
+                output_spec = tf.estimator.EstimatorSpec(mode=mode,
+                                                         predictions={"sen_a_embedding": sen_a_output,
+                                                                      "input_ids_a": input_ids_a,
+                                                                      "keyword_probs_a": sen_a_attention_probs,
+                                                                      "sen_b_embedding": sen_b_output,
+                                                                      "input_ids_b": input_ids_b,
+                                                                      "keyword_probs_b": sen_b_attention_probs},
+                                                         prediction_hooks=[log_hook])
         return output_spec
     return model_fn
 
@@ -411,6 +452,8 @@ def main(_):
     tokenizer = tokenization.Tokenizer(vocab_file=FLAGS.vocab_file, stop_words_file=FLAGS.stop_words_file, use_pos=False)
 
     run_config = None
+    num_train_steps = 0
+    num_warmup_steps = 0
     if FLAGS.do_train:
         train_examples = processor.get_train_examples(FLAGS.input_file)
         num_train_steps = int(
@@ -430,6 +473,7 @@ def main(_):
     model_fn = model_fn_builder(config=config,
                                 learning_rate=FLAGS.learning_rate,
                                 task=FLAGS.task_type,
+                                single_text=FLAGS.single_text,
                                 init_checkpoint=FLAGS.init_checkpoint,
                                 num_train_steps=num_train_steps,
                                 num_warmup_steps=num_warmup_steps,
@@ -501,10 +545,10 @@ def main(_):
                 tf.logging.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
     else:
-        predict_examples = processor.get_test_examples()
+        predict_examples = processor.get_test_examples(FLAGS.input_file)
         predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
         file_based_convert_examples_to_features(predict_examples, FLAGS.max_seq_length, tokenizer, predict_file,
-                                                set_type="test", label_type="int", single_text=True)
+                                                set_type="test", label_type="int", single_text=FLAGS.single_text)
 
         tf.logging.info("***** Running prediction*****")
         tf.logging.info("  Num examples = %d", len(predict_examples))
@@ -513,7 +557,7 @@ def main(_):
             input_file=predict_file,
             seq_length=FLAGS.max_seq_length,
             is_training=False,
-            single_text=True
+            single_text=FLAGS.single_text
         )
 
         if FLAGS.pred_model is not None:
@@ -530,21 +574,27 @@ def main(_):
         with tf.gfile.GFile(output_predict_file, "w") as writer:
             tf.logging.info("***** Predict results *****")
             for (i, prediction) in enumerate(result):
-                sen_embedding = prediction["sen_embedding"]
-                input_ids = prediction["input_ids"]
-                word_attention_probs = prediction["word_attention_probs"]
-                sorted_keyword_idx = np.argsort(-word_attention_probs, axis=-1)
-
-                extracted_keywords = collections.OrderedDict()
-                for idx in sorted_keyword_idx:
-                    word_id = input_ids[idx]
-                    word_prob = word_attention_probs[idx]
+                sen_a_embedding = prediction["sen_a_embedding"]
+                input_ids_a = prediction["input_ids_a"]
+                keyword_probs_a = prediction["keyword_probs_a"]
+                if not FLAGS.single_text:
+                    sen_b_embedding = prediction["sen_b_embedding"]
+                    input_ids_b = prediction["input_ids_b"]
+                    keyword_probs_b = prediction["keyword_probs_b"]
+                    
+                sorted_keyword_idx_a = np.argsort(-keyword_probs_a)
+                extracted_keywords_a = []
+                for idx in sorted_keyword_idx_a:
+                    word_id = input_ids_a[idx]
+                    word_prob = keyword_probs_a[idx]
                     word = tokenizer.convert_ids_to_tokens([word_id])[0]
-                    extracted_keywords[word] = word_prob
+                    extracted_keywords_a.append([word, word_prob])
+                
+                keyword_output_a = " ".join(["%s:%f" % (kw, prob) for kw, prob in extracted_keywords_a])
+                text_output_a = " ".join(tokenizer.convert_ids_to_tokens(input_ids_a))
 
-                keyword_output = " ".join(["%s:%f" % (kw, prob) for kw, prob in extracted_keywords.items()])
-                text_output = " ".join(tokenizer.convert_ids_to_tokens[input_ids])
-                writer.write("%s\t%s" % (keyword_output, text_output))
+                writer.write("%s\t%s" % (keyword_output_a, text_output_a))
+                writer.write("\n")
 
 if __name__ == "__main__":
     #logging.basicConfig(level=logging.INFO, format="[%(asctime)s-%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")

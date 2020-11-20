@@ -200,7 +200,8 @@ def create_pretraining_data_from_file(input_file,
             parts = line.strip().split('\t')
             text_a = parts[0]
             text_b = parts[1]
-            label = int(parts[2])
+            # label = int(parts[2])
+            label = 1
             if do_token == 1:
                 tokens_a = tokenizer.tokenize(text_a)
                 tokens_b = tokenizer.tokenize(text_b)

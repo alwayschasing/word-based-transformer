@@ -69,12 +69,16 @@ class SenpairProcessor(DataProcessor):
             text_a = tokenization.convert_to_unicode(line[0].strip())
             text_b = None
             if set_type == "test":
+                text_a = text_a + " " + tokenization.convert_to_unicode(line[1].strip())
                 label = 1
+            elif set_type == "eval":
+                label = int(line[2])
             else:
                 if len(line) < 2:
                     logging.error("[data error] line %d, %s, parts less 3" % (i, line))
                     continue
                     raise ValueError("data format error, parts less 3")
+                #text_b = tokenization.convert_to_unicode(line[1].strip())
                 text_b = tokenization.convert_to_unicode(line[1].strip())
                 #label = tokenization.convert_to_unicode(line[2])
                 label = 1
@@ -89,8 +93,8 @@ class SenpairProcessor(DataProcessor):
         return self._create_examples(self._read_tsv(data_path), "train")
 
     def get_dev_examples(self, data_path):
-        return self._create_example(self._read_tsv(data_path), "dev")
+        return self._create_examples(self._read_tsv(data_path), "dev")
 
     def get_test_examples(self, data_path):
-        return self._create_example(self._read_tsv(data_path), "test")
+        return self._create_examples(self._read_tsv(data_path), "test")
 
